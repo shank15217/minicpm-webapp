@@ -14,6 +14,7 @@ Known-defect IDs reference @skepticsammy architecture review (S1,S2,S6,S7).
 """
 import os
 import statistics
+from pathlib import Path  # module-level: Paul caught method-local import making S10 pin NameError-XFAIL-forever
 import threading
 import time
 
@@ -272,7 +273,9 @@ class TestS10NoPairwiseAnywhere:
     pairwise template is deleted from the narrator path, remove the xfail.
     """
 
-    @pytest.mark.xfail(strict=True, reason="S10 open in v0.4.2: VERIFY_PROMPT_TEMPLATE still formatted at the det-is-None branch")
+    # S10 CLOSED (v0.4.2): xfail mark removed per ritual — pairwise template is
+    # gone from app.py (verified tombstone-comments-only at :72/:664); this test
+    # now proves the closure and guards against reintroduction.
     def test_no_pairwise_prompt_format_call_remains(self):
         src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
         assert "VERIFY_PROMPT_TEMPLATE.format(" not in src, (
