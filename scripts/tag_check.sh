@@ -32,7 +32,7 @@ declare -A MUST_CLOSED=(
 CLOSE_LIST="${MUST_CLOSED[$TAG]:-}"
 
 echo "== [1/2] full suite (all tiers, WRITE_PROBES=1, xfail_strict) against $BASE_URL"
-WRITE_PROBES=1 uv run pytest -rxX tests/ -v
+WRITE_PROBES=1 uv run --extra dev pytest -rxX tests/ -v
 
 echo "== [2/2] milestone xfail-mark removal check for $TAG"
 for sid in $CLOSE_LIST; do
