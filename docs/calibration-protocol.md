@@ -81,16 +81,29 @@ each image's own height"): `detdiff.page_diff` splits BOTH images with shared
 absolute-y bands capped at `h = min(heights)`; height mismatch is *already* a
 first-class signal — `changed` trips on `|Δh| > 2×BAND_OVERLAP` and
 `height_delta_px` ships in the output (detdiff.py:102/:110). **Residual failure
-class:** sub-flag height drift, or a content insertion under the flag
+class:** sub-flag drift, or a content insertion under the flag
 threshold — downstream bands then compare misaligned regions and cascade-fire
 on legitimate updates. Alerting keeps its fail-loud bias (good), but
 localization becomes garbage, and calibrating per-band tolerances against
 cascading bands would encode the bug as tolerance. Options: (a) accept cascade
 for v0.5 — route `all-bands-changed + Δheight` runs into a distinct
 human-review / `site-updated` flow separate from defacement; (b) best-offset
-window matching per band; (c) DOM-anchored band edges. QA recommendation:
-**(a)** — cheap, honest, preserves fail-loud; revisit with control data in
-hand. Owner: code owner; decision required before `calibrate.py` exists.
+window matching per band; (c) DOM-anchored band edges. **(b)-lite
+(Sammy):** option (a) for the site-updated routing, plus re-match *flagged
+bands only* against the baseline at ±1-band offsets (radius = the sub-flag
+drift bound `2×BAND_OVERLAP`), pure CPU, deterministic. QA guardrail for any
+offset-matching variant — **maximizing sim must never downgrade WHETHER**:
+the alert consumes the RAW page min (conservative, fail-loud); the ALIGNED sim
+is used only for localization, narrator crop selection, and the tolerance
+distributions, and profiles store both raw and aligned control distributions.
+Acceptance if (b)-lite is adopted: synthetic mid-page insertion replay must
+localize to ±1 band, and an injected blank-band defacement positioned so a
+shifted baseline window partially resembles it must still alert. Try on the
+fhlb control batch first; fallback is documenting localization precision
+(±drift px) next to the §4 sensitivity floor in the README.
+QA recommendation: **(a) minimum; (a)+(b)-lite if the guardrail holds on
+control data.** Owner: code owner; decision required before `calibrate.py`
+exists.
 
 ## 7. Recalibration triggers (any one ⇒ full §2–§4 rerun)
 prompt text change · model/quant change · build id change · tower mode change
