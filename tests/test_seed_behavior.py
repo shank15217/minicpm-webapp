@@ -200,3 +200,27 @@ class TestS4StructuredScore:
         expected = ("Healthy" if s >= 90 else "Minor" if s >= 60
                     else "Significant" if s >= 30 else "Defaced")
         assert v == expected, f"score={s} verdict={v} expected={expected}"
+
+
+class TestS2bRedirectSSRF:
+    """S2b (Sammy, planned v0.3 gate): a target allowlist that validates the
+    request URL but follows redirects gets 302'd past the blocklist. The v0.3
+    filter MUST be per-hop (or redirects disabled), plus resolve-pin against
+    DNS rebinding (sibling case: hostname that resolves differently on second
+    lookup — needs a controllable resolver, tracked in suite backlog).
+
+    Needs the QA redirector on the deploy host:
+        python tests/helpers/redirector.py 8012   # 302s everything -> :8080/health
+    then set REDIRECTOR=1 REDIRECT_URL=http://127.0.0.1:8012/r
+    """
+
+    @pytest.mark.skipif(os.environ.get("REDIRECTOR") != "1",
+                        reason="start tests/helpers/redirector.py, set REDIRECTOR=1")
+    @pytest.mark.xfail(reason="DEFECT S2b: redirect bypass of target allowlist "
+                              "(planned v0.3 per-hop validation)")
+    def test_redirect_to_internal_blocked(self):
+        redirect = os.environ.get("REDIRECT_URL", "http://127.0.0.1:8012/r")
+        r = _analyze(url=redirect)
+        norm = r.text.replace("\\", "").replace(" ", "")
+        leaked = '"status":"ok"' in norm
+        assert r.status_code == 400 or not leaked, r.text[:300]
