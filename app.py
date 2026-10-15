@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import io
@@ -5,11 +6,12 @@ import json
 import os
 import re
 from pathlib import Path
+import sqlite3
 import time
 import datetime
 from typing import Optional
 
-import requests
+import httpx
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +60,83 @@ Tasks:
 4. Verdict: Healthy / Minor changes / Significant changes / Likely defaced or broken.
 
 Be specific and concise."""
+
+# Version stamp over the prompt corpus: any edit to the prompt text changes
+# this hash, and run-history rows on different prompt_version values are NOT
+# score-comparable (Sammy provenance requirement #1, 2026-10-15).
+PROMPT_VERSION = hashlib.sha256(
+    (SYSTEM_PROMPT + VERIFY_PROMPT_TEMPLATE).encode()
+).hexdigest()[:12]
+
+
+class CheckFailed(Exception):
+    """A monitoring check could not be performed (infrastructure failure).
+
+    NEVER convertible into page/VLM content: endpoints translate this into a
+    5xx CHECK_FAILED response so 'check failed' can never masquerade as
+    'site unhealthy' (defect S6) or feed error prose to the model (S6b).
+    """
+
+    def __init__(self, code: str, detail: str = ""):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}" if detail else code)
+
+
+# ---------------------------------------------------------------------------
+# Run history (SQLite) — answers "was it healthy at 3am?" and keeps every
+# score comparable via full provenance (Sammy requirement #1): model, prompt
+# version, backend, llama.cpp build fingerprint, finish_reason and the raw
+# model output are stored per row.
+# ---------------------------------------------------------------------------
+RUNS_DB_PATH = BASELINES_DIR / "runs.db"
+
+RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS run_history (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                TEXT NOT NULL,           -- ISO-8601 UTC
+    url               TEXT,
+    baseline_key      TEXT,
+    baseline_sha256   TEXT,                    -- digest of compared baseline PNG
+    mode              TEXT,                    -- 16x / 4x
+    backend_url       TEXT,                    -- llama-server used
+    model             TEXT,                    -- model path reported by backend
+    llama_fingerprint TEXT,                    -- llama.cpp system_fingerprint
+    prompt_version    TEXT,                    -- sha256[:12] of prompt corpus
+    status            TEXT NOT NULL,           -- OK | CHECK_FAILED
+    error_code        TEXT,                    -- when CHECK_FAILED
+    finish_reason     TEXT,                    -- stop|length|content_filter|...
+    score             INTEGER,                 -- NULL until v0.5 structured output
+    verdict           TEXT,                    -- v0.5: DERIVED from score, never model's own
+    raw_output        TEXT,                    -- full model text, for audit
+    page_text_sha256  TEXT,                    -- what text context the model saw
+    elapsed_s         REAL
+);
+CREATE INDEX IF NOT EXISTS idx_run_history_ts ON run_history (ts);
+CREATE INDEX IF NOT EXISTS idx_run_history_url ON run_history (url);
+"""
+
+
+def _db() -> sqlite3.Connection:
+    conn = sqlite3.connect(RUNS_DB_PATH)
+    return conn
+
+
+def init_run_db() -> None:
+    with _db() as conn:
+        conn.executescript(RUNS_SCHEMA)
+
+
+def record_run(**fields) -> None:
+    """Insert one run-history row. Small local write; kept sync by design."""
+    row = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        **fields,
+    }
+    cols = ", ".join(row)
+    marks = ", ".join("?" for _ in row)
+    with _db() as conn:
+        conn.execute(f"INSERT INTO run_history ({cols}) VALUES ({marks})", tuple(row.values()))
 
 
 def url_to_hash(url: str) -> str:
@@ -125,42 +204,92 @@ def image_to_base64(image_bytes: bytes) -> str:
     return f"data:image/png;base64,{b64}"
 
 
-def call_llama(messages: list, mode: str = "16x") -> str:
-    """Call the appropriate llama-server based on vision mode."""
+# Shared async HTTP client (pooled; keeps the event loop free — defect S7).
+# Created at import time (no loop needed for construction), closed on shutdown.
+_http: httpx.AsyncClient = httpx.AsyncClient(
+    timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True
+)
+
+
+@app.on_event("startup")
+async def _startup():
+    init_run_db()
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    if _http:
+        await _http.aclose()
+
+
+async def call_llama(messages: list, mode: str = "16x") -> dict:
+    """Call the appropriate llama-server. Returns a dict with:
+    content, finish_reason, fingerprint, model, backend_url.
+
+    Raises CheckFailed on ANY infrastructure failure (S6) — never returns
+    error prose as a result string. finish_reason == 'length' is a failure:
+    truncated output must never be parsed downstream (Sammy rule (a)).
+    """
     server_url = LLAMA_SERVER_4X if mode == "4x" else LLAMA_SERVER_16X
     payload = {
         "model": "minicpm-v",
         "messages": messages,
-        "max_tokens": 600,
+        "max_tokens": 1200,
         "temperature": 0.2,
         "stream": False,
     }
     try:
-        resp = requests.post(server_url, json=payload, timeout=180)
+        resp = await _http.post(server_url, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    except httpx.HTTPStatusError as e:
+        raise CheckFailed("LLAMA_HTTP", f"({mode}) {server_url} -> HTTP {e.response.status_code}")
     except Exception as e:
-        return (
-            f"Error calling llama-server ({mode}): {str(e)}. "
-            f"Make sure the {mode} server is running at {server_url}"
+        raise CheckFailed(
+            "LLAMA_UNREACHABLE",
+            f"({mode}) {server_url}: {type(e).__name__}: {e}. Is the {mode} server running?",
         )
-
-
-def fetch_page_text(url: str) -> str:
-    """Fetch plain text content from a URL for comparison."""
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; MiniCPM-Analyzer/1.0)"}
-        resp = requests.get(url, headers=headers, timeout=15)
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
+        finish_reason = choice.get("finish_reason")
+    except (KeyError, IndexError) as e:
+        raise CheckFailed("LLAMA_MALFORMED", f"({mode}) response missing fields: {e!r}")
+    if finish_reason == "length":
+        # Never attempt to use/parse truncated output.
+        raise CheckFailed("LLAMA_TRUNCATED", f"({mode}) max_tokens exhausted before stop")
+    if not content or not content.strip():
+        raise CheckFailed("LLAMA_EMPTY", f"({mode}) empty completion (finish_reason={finish_reason})")
+    return {
+        "content": content,
+        "finish_reason": finish_reason,
+        "fingerprint": data.get("system_fingerprint", ""),
+        "model": data.get("model", ""),
+        "backend_url": server_url,
+    }
+
+
+async def fetch_page_text(url: str) -> str:
+    """Fetch plain text content from a URL for comparison.
+
+    Raises CheckFailed on any failure (S6b) — the old 'Failed to fetch ...'
+    string must never be handed to the VLM as page content.
+    """
+    try:
+        resp = await _http.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MiniCPM-Analyzer/1.0)"},
+            timeout=15.0,
+        )
         resp.raise_for_status()
         text = resp.text
-        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:2000]
     except Exception as e:
-        return f"Failed to fetch page text: {str(e)}"
+        raise CheckFailed("FETCH_FAILED", f"{url}: {type(e).__name__}: {e}")
+    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:2000]
 
 
 async def capture_screenshot(url: str) -> Optional[bytes]:
@@ -245,7 +374,13 @@ async def analyze(
         url = url.strip()
         screenshot_bytes = await capture_screenshot(url)
         if not screenshot_bytes:
-            return JSONResponse({"error": "Failed to capture screenshot for baseline"}, status_code=500)
+            # Seed pin (test_capture_path_dns_failure_is_500): keep 500 here;
+            # v0.2 adds a machine-readable reason code alongside it.
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": "TARGET_UNREACHABLE",
+                 "error": "Failed to capture screenshot for baseline"},
+                status_code=500,
+            )
 
         # Generate description once and persist it with the baseline
         data_url = image_to_base64(screenshot_bytes)
@@ -256,9 +391,26 @@ async def analyze(
                 {"type": "image_url", "image_url": {"url": data_url}},
             ]},
         ]
-        description = call_llama(messages, mode=mode)
+        try:
+            llm = await call_llama(messages, mode=mode)
+        except CheckFailed as e:
+            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+                       elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
+                status_code=502,
+            )
+        description = llm["content"]
 
         key = save_baseline(url, screenshot_bytes, description=description)
+        record_run(
+            url=url, baseline_key=key,
+            baseline_sha256=hashlib.sha256(screenshot_bytes).hexdigest(),
+            mode=mode, backend_url=llm["backend_url"], model=llm["model"],
+            llama_fingerprint=llm["fingerprint"], prompt_version=PROMPT_VERSION,
+            status="OK", finish_reason=llm["finish_reason"], raw_output=description,
+            elapsed_s=round(time.perf_counter() - start_time, 2),
+        )
         result["baseline_captured"] = True
         result["baseline_key"] = key
         result["url"] = url
@@ -279,6 +431,7 @@ async def analyze(
     ref_bytes = None
     stored_description = None
     using_baseline = False
+    key_for_history = None
     if url and url.strip():
         url = url.strip()
         stored = load_baseline(url)
@@ -286,6 +439,7 @@ async def analyze(
             ref_bytes = stored["image_bytes"]
             stored_description = stored.get("description") or None
             using_baseline = True
+            key_for_history = url_to_hash(url)
             result["using_stored_baseline"] = True
 
     if not ref_bytes and image_bytes:
@@ -310,12 +464,29 @@ async def analyze(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ]
-        result["description"] = call_llama(messages, mode=mode)
+        try:
+            llm = await call_llama(messages, mode=mode)
+        except CheckFailed as e:
+            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+                       elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
+                status_code=502,
+            )
+        result["description"] = llm["content"]
         result["description_source"] = "generated"
     result["classification_hint"] = "See description above for category."
 
     if url and url.strip():
-        page_text = fetch_page_text(url)
+        try:
+            page_text = await fetch_page_text(url)
+        except CheckFailed as e:
+            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+                       elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
+                status_code=502,
+            )
         result["url"] = url
         result["page_text_preview"] = page_text[:500] + "..." if len(page_text) > 500 else page_text
 
@@ -349,7 +520,31 @@ async def analyze(
             {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
             {"role": "user", "content": verify_content},
         ]
-        result["verification"] = call_llama(verify_messages, mode=mode)
+        try:
+            llm = await call_llama(verify_messages, mode=mode)
+        except CheckFailed as e:
+            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+                       page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
+                       elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
+                status_code=502,
+            )
+        result["verification"] = llm["content"]
+        # Advisory label until the v0.5 calibration milestone (Sammy rule:
+        # no alerts on prose confidence).
+        result["verification_quality"] = "vlm-prose-advisory (v0.5 will add calibrated numeric score)"
+        result["status"] = "OK"
+        record_run(
+            url=url,
+            baseline_key=key_for_history if using_baseline else None,
+            baseline_sha256=hashlib.sha256(ref_bytes).hexdigest() if using_baseline else None,
+            mode=mode, backend_url=llm["backend_url"], model=llm["model"],
+            llama_fingerprint=llm["fingerprint"], prompt_version=PROMPT_VERSION,
+            status="OK", finish_reason=llm["finish_reason"], raw_output=llm["content"],
+            page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
+            elapsed_s=round(time.perf_counter() - start_time, 2),
+        )
         result["visual_verification_used"] = bool(screenshot_data_url)
         result["baseline_source"] = "stored" if using_baseline else "uploaded"
 
@@ -366,18 +561,23 @@ async def list_baselines():
 
 @app.get("/health")
 async def health():
-    """Check if the llama-servers are reachable."""
-    def check(url: str) -> str:
+    """Check if the llama-servers are reachable.
+
+    Fully async with short per-backend timeouts (S7): /health must stay
+    responsive while long /analyze verifications are in flight.
+    """
+    async def check(url: str) -> str:
         try:
             health_url = url.replace("/v1/chat/completions", "/health")
-            resp = requests.get(health_url, timeout=5)
+            resp = await _http.get(health_url, timeout=2.5)
             return "ok" if resp.status_code == 200 else f"status {resp.status_code}"
         except Exception as e:
-            return f"unreachable: {str(e)}"
+            return f"unreachable: {type(e).__name__}: {e}"
 
+    r16, r4x = await asyncio.gather(check(LLAMA_SERVER_16X), check(LLAMA_SERVER_4X))
     return {
-        "16x": check(LLAMA_SERVER_16X),
-        "4x": check(LLAMA_SERVER_4X),
+        "16x": r16,
+        "4x": r4x,
         "playwright": "available" if _playwright_available() else "not installed (run: playwright install chromium)",
         "baselines_count": len(load_index().get("baselines", {})),
     }

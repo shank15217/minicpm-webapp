@@ -2,7 +2,7 @@
 # This file exists only for legacy `pip install -r requirements.txt` users.
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-requests>=2.32.0
+httpx>=0.27.0
 Pillow>=10.4.0
 playwright>=1.48.0
 python-multipart>=0.0.9
