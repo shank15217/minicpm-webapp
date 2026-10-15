@@ -1,0 +1,19 @@
+# llama-server for MiniCPM-V, instantiated per port:
+#   minicpm-llama@8080  -> 16x mmproj (fast)
+#   minicpm-llama@8081  -> 4x mmproj (detail)
+# Edit User=, MODEL_DIR, and LLAMA_BIN before enabling.
+[Unit]
+Description=llama-server MiniCPM-V (port %i)
+After=network-online.target
+
+[Service]
+User=root
+Environment=LLAMA_BIN=/usr/local/bin/llama-server
+Environment=MODEL_DIR=/opt/models/MiniCPM-V-4.7
+Environment=GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf
+ExecStart=/bin/sh -c 'case "%i" in 8080) M="$MODEL_DIR/mmproj-model-f16.gguf";; 8081) M="$MODEL_DIR/mmproj-model-f16-4x.gguf";; *) echo "minicpm-llama@: expected 8080 or 8081, got %i" >&2; exit 1;; esac; exec "$LLAMA_BIN" -m "$MODEL_DIR/$GGUF" --mmproj "$M" --host 127.0.0.1 --port %i -c 8192 -ngl 99'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

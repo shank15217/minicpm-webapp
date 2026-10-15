@@ -53,6 +53,12 @@ The web UI is optional; the entire workflow is available via a clean REST API.
 
 ## Quick Start
 
+> **Recommended: fresh machine?** Run `sudo ./scripts/install.sh` (idempotent) —
+> it installs RHEL/Debian system packages for headless Chromium, `uv`, the
+> locked venv (`uv sync`), and Playwright Chromium, with a launch smoke test.
+> Full walkthrough incl. llama.cpp, models, and systemd: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
+
+
 ### 1. Start the two llama-server instances
 
 Example using the flags and paths currently in use:

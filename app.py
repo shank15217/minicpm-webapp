@@ -21,8 +21,8 @@ app = FastAPI(title="MiniCPM-V Image Analyzer")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Baselines storage
-BASELINES_DIR = Path("baselines")
-BASELINES_DIR.mkdir(exist_ok=True)
+BASELINES_DIR = Path(os.getenv("BASELINES_DIR", "baselines"))
+BASELINES_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_PATH = BASELINES_DIR / "index.json"
 
 # Two possible backends. Override via env if needed.
@@ -394,4 +394,4 @@ def _playwright_available() -> bool:
 if __name__ == "__main__":
     import uvicorn
     # Bind to all interfaces so it is reachable over the network
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

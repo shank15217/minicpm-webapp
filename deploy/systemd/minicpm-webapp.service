@@ -1,0 +1,20 @@
+# minicpm-webapp FastAPI server. Edit User=, WorkingDirectory=, PATH, and
+# Environment= lines to match your install. See docs/DEPLOY.md step 4.
+[Unit]
+Description=minicpm-webapp synthetic website health monitor
+After=network-online.target minicpm-llama@8080.service minicpm-llama@8081.service
+Wants=minicpm-llama@8080.service minicpm-llama@8081.service
+
+[Service]
+User=root
+WorkingDirectory=/opt/minicpm-webapp
+Environment=PATH=/root/.local/bin:/usr/bin:/bin
+Environment=PORT=8000
+# v0.3 will add API_KEY auth; until then keep this off the open network:
+Environment=HOST=127.0.0.1
+ExecStart=/root/.local/bin/uv run uvicorn app:app --host ${HOST} --port ${PORT}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

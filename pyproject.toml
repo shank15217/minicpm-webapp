@@ -1,0 +1,35 @@
+[project]
+name = "minicpm-webapp"
+version = "0.1.0"
+description = "Synthetic website health monitor: Playwright screenshots + MiniCPM-V (llama.cpp) visual verification with confidence scoring against a captured baseline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["monitoring", "synthetic-monitoring", "defacement", "minicpm", "llama.cpp", "playwright", "vision-llm"]
+
+# Canonical dependency list. requirements.txt is kept only as a
+# pointer for legacy `pip install -r` users; `uv sync` is the supported path.
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "requests>=2.32.0",
+    "Pillow>=10.4.0",
+    "playwright>=1.48.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+# Not a distributable package: run via `uv run uvicorn app:app` (see
+# scripts/start_app.sh). uv therefore must not try to build/install it.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: slow checks that invoke the vision-model verify path",
+]
+xfail_strict = true
