@@ -14,6 +14,7 @@ import datetime
 from typing import Optional
 
 import anyio
+import detdiff
 import httpx
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -55,6 +56,10 @@ LLAMA_SERVER_4X = os.getenv(
     "LLAMA_SERVER_4X",
     "http://127.0.0.1:8081/v1/chat/completions"
 )
+# v0.4 deterministic verdict layer (detdiff): page_sim at or above this
+# threshold => "identical", VLM narration skipped entirely. Provisional
+# pending v0.5 control calibration (per-baseline, per-band profiles).
+DET_PASS_SIM = float(os.getenv("DET_PASS_SIM", "0.995"))
 
 SYSTEM_PROMPT = """You are a precise image analysis assistant. 
 When given an image, provide:
@@ -127,6 +132,9 @@ CREATE TABLE IF NOT EXISTS run_history (
     finish_reason     TEXT,                    -- stop|length|content_filter|...
     score             INTEGER,                 -- NULL until v0.5 structured output
     verdict           TEXT,                    -- v0.5: DERIVED from score, never model's own
+    kind              TEXT DEFAULT 'check',    -- check | control (calibration identical-input runs)
+    det_similarity    REAL,                    -- v0.4: deterministic page_sim (THE verdict)
+    det_changed_bands TEXT,                    -- JSON list of "y0-y1" windows below threshold
     raw_output        TEXT,                    -- full model text, for audit
     page_text_sha256  TEXT,                    -- what text context the model saw
     elapsed_s         REAL
@@ -151,6 +159,14 @@ def _db() -> sqlite3.Connection:
 def init_run_db() -> None:
     with _db() as conn:
         conn.executescript(RUNS_SCHEMA)
+        # CREATE TABLE IF NOT EXISTS never adds columns to a table that
+        # already exists — explicit idempotent migration for older run DBs.
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(run_history)")}
+        for col, typ in (("kind", "TEXT DEFAULT 'check'"),
+                         ("det_similarity", "REAL"),
+                         ("det_changed_bands", "TEXT")):
+            if col not in existing:
+                conn.execute(f"ALTER TABLE run_history ADD COLUMN {col} {typ}")
 
 
 def record_run(**fields) -> None:
@@ -511,57 +527,97 @@ async def analyze(
         result["page_text_preview"] = page_text[:500] + "..." if len(page_text) > 500 else page_text
 
         screenshot_data_url = None
+        det = None
         if do_visual:
             screenshot_bytes = await capture_screenshot(url)
             if screenshot_bytes:
                 screenshot_data_url = image_to_base64(screenshot_bytes)
                 result["screenshot_captured"] = True
+                # v0.4 deterministic verdict layer: pure CPU, off the event
+                # loop. The pixel diff owns WHETHER something changed; the
+                # VLM must never answer same-or-different (QA-REPORT-5
+                # Acts 1-6: prompt-conditioned confabulation and laundering
+                # at 1B scale).
+                try:
+                    det = await anyio.to_thread.run_sync(
+                        functools.partial(detdiff.page_diff, ref_bytes,
+                                          screenshot_bytes, DET_PASS_SIM))
+                except Exception as e:  # a broken diff must never fake healthy
+                    det = {"error": f"{type(e).__name__}: {e}", "changed": True}
+                result["deterministic"] = det
             else:
                 result["screenshot_captured"] = False
                 result["screenshot_error"] = "Failed to capture screenshot (Playwright issue or site blocked)"
 
-        # Verification
-        verify_content = [
-            {"type": "text", "text": "Baseline / reference image:"},
-            {"type": "image_url", "image_url": {"url": ref_data_url}},
-        ]
-        if screenshot_data_url:
-            verify_content.extend([
-                {"type": "text", "text": "Live page screenshot:"},
-                {"type": "image_url", "image_url": {"url": screenshot_data_url}},
-            ])
-
-        verify_content.append({
-            "type": "text",
-            "text": VERIFY_PROMPT_TEMPLATE.format(url=url, page_text=page_text)
-        })
-
-        verify_messages = [
-            {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
-            {"role": "user", "content": verify_content},
-        ]
-        try:
-            llm = await call_llama(verify_messages, mode=mode)
-        except CheckFailed as e:
-            await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
-                       page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
-                       elapsed_s=round(time.perf_counter() - start_time, 2))
-            return JSONResponse(
-                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
-                status_code=502,
+        # Verification. v0.4 architecture ruling (QA-REPORT-5 Acts 1-6):
+        # the deterministic diff owns WHETHER; the VLM never answers
+        # same-or-different at any prompt wording — it only narrates once a
+        # change is already established, and is skipped entirely otherwise.
+        llm = None
+        if det is not None and not det.get("error") and not det["changed"]:
+            result["verification"] = (
+                f"Deterministic band comparison: live page matches baseline "
+                f"across all {det.get('n_bands', '?')} bands "
+                f"(page_sim={det.get('page_sim')}, "
+                f"threshold={det.get('threshold')}). VLM narration skipped: "
+                f"pixel-identical input needs no judge."
             )
-        result["verification"] = llm["content"]
-        # Advisory label until the v0.5 calibration milestone (Sammy rule:
-        # no alerts on prose confidence).
-        result["verification_quality"] = "vlm-prose-advisory (v0.5 will add calibrated numeric score)"
+            result["verification_quality"] = (
+                "deterministic-band-sim (v0.4 verdict; threshold provisional "
+                "until v0.5 control calibration)")
+        else:
+            verify_content = [
+                {"type": "text", "text": "Baseline / reference image:"},
+                {"type": "image_url", "image_url": {"url": ref_data_url}},
+            ]
+            if screenshot_data_url:
+                verify_content.extend([
+                    {"type": "text", "text": "Live page screenshot:"},
+                    {"type": "image_url", "image_url": {"url": screenshot_data_url}},
+                ])
+
+            verify_content.append({
+                "type": "text",
+                "text": VERIFY_PROMPT_TEMPLATE.format(url=url, page_text=page_text)
+            })
+
+            verify_messages = [
+                {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
+                {"role": "user", "content": verify_content},
+            ]
+            try:
+                llm = await call_llama(verify_messages, mode=mode)
+            except CheckFailed as e:
+                await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+                           page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
+                           elapsed_s=round(time.perf_counter() - start_time, 2))
+                return JSONResponse(
+                    {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
+                    status_code=502,
+                )
+            result["verification"] = llm["content"]
+            result["verification_quality"] = (
+                "det-changed verdict + vlm-narration (v0.4: act on "
+                "deterministic similarity; narration is advisory and may "
+                "confabulate)"
+                if det is not None else
+                # No screenshot: nothing was visually verified this round.
+                "vlm-prose-advisory (v0.5 will add calibrated numeric score)")
         result["status"] = "OK"
         await _record(
             url=url,
             baseline_key=key_for_history if using_baseline else None,
             baseline_sha256=hashlib.sha256(ref_bytes).hexdigest() if using_baseline else None,
-            mode=mode, backend_url=llm["backend_url"], model=llm["model"],
-            llama_fingerprint=llm["fingerprint"], prompt_version=PROMPT_VERSION,
-            status="OK", finish_reason=llm["finish_reason"], raw_output=llm["content"],
+            mode=mode,
+            backend_url=llm["backend_url"] if llm else None,
+            model=llm["model"] if llm else None,
+            llama_fingerprint=llm["fingerprint"] if llm else None,
+            prompt_version=PROMPT_VERSION,
+            status="OK",
+            finish_reason=llm["finish_reason"] if llm else None,
+            raw_output=llm["content"] if llm else None,
+            det_similarity=det["page_sim"] if det and not det.get("error") else None,
+            det_changed_bands=json.dumps(det["changed_bands"]) if det and not det.get("error") else None,
             page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
             elapsed_s=round(time.perf_counter() - start_time, 2),
         )
