@@ -177,3 +177,36 @@ class TestS7EventLoop:
         th.join(timeout=5)
         worst = max(lats) if lats else 99
         assert worst < 1.0, f"/health stalled {worst:.1f}s under 2 concurrent checks"
+
+
+class TestS4StructuredScore:
+    """S4: confidence must be a parsed, numeric, machine-readable field.
+    Pins the v0.5 API contract so its flip gates the tag (Sammy checklist).
+    Contract: GET /checks/latest -> {score:int 0-100, verdict:enum, differences:list}
+    plus verdict MUST be derivable from score via published thresholds (Catch-2);
+    the model's own verdict field is advisory only."""
+
+    @pytest.mark.xfail(reason="DEFECT S4: no structured score field anywhere in "
+                              "seed responses (verification is prose-only; "
+                              "verified 2026-10-14). v0.5 JSON-schema output -> XPASS")
+    def test_checks_latest_contract(self):
+        r = requests.get(f"{BASE}/checks/latest", timeout=15)
+        assert r.status_code == 200, r.status_code
+        j = r.json()
+        assert isinstance(j.get("score"), int) and 0 <= j["score"] <= 100
+        assert isinstance(j.get("verdict"), str) and j["verdict"]
+        assert isinstance(j.get("differences"), list)
+
+    @pytest.mark.xfail(reason="DEFECT S4/Catch-2: verdict must be DERIVED from "
+                              "score by published threshold table, never trusted "
+                              "from the model (measured disagreement: score=4 with "
+                              "verdict=Suspicious, 6/6 calls). v0.5 -> XPASS")
+    def test_verdict_consistent_with_score(self):
+        r = requests.get(f"{BASE}/checks/latest", timeout=15)
+        j = r.json()
+        assert r.status_code == 200
+        # Published thresholds (v0.5): >=90 Healthy, >=60 Minor, >=30 Significant, else Defaced
+        s, v = j["score"], j["verdict"]
+        expected = ("Healthy" if s >= 90 else "Minor" if s >= 60
+                    else "Significant" if s >= 30 else "Defaced")
+        assert v == expected, f"score={s} verdict={v} expected={expected}"
