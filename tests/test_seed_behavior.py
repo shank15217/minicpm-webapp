@@ -66,9 +66,6 @@ class TestS6ErrorAsContent:
     """S6: backend failure must not be returned as 200 + error prose."""
 
     @pytest.mark.skipif(not DEAD, reason="DEAD_BACKEND_URL not set")
-    @pytest.mark.xfail(reason="DEFECT S6: dead llama-server yields HTTP 200 with "
-                              "'Error calling llama-server' prose in description "
-                              "(verified 2026-10-14; flips XPASS when v0.2 lands)")
     def test_dead_backend_not_200(self):
         r = requests.post(f"{DEAD}/analyze",
                           files={"file": ("p.png", _png(), "image/png")},
@@ -81,10 +78,6 @@ class TestS6ErrorAsContent:
         r = _analyze(url="http://qa-probe.invalid/page", capture="true")
         assert r.status_code == 500
 
-    @pytest.mark.xfail(reason="DEFECT S6: normal path with unreachable URL returns "
-                              "HTTP 200; 'Failed to fetch' text is fed to the VLM as "
-                              "page content (reproduced 2026-10-14). v0.2 typed "
-                              "errors -> XPASS")
     def test_unreachable_url_error_becomes_content(self):
         r = _analyze(url="http://qa-probe.invalid/page")
         body = r.text if r.ok else ""
@@ -151,9 +144,6 @@ class TestS7EventLoop:
     """S7: blocking I/O in async endpoints freezes /health."""
 
     @pytest.mark.gpu
-    @pytest.mark.xfail(reason="DEFECT S7: 2 concurrent /analyze froze /health to "
-                              "max 13.9s vs ~8ms idle (measured 2026-10-14). "
-                              "v0.2 httpx/async path -> XPASS")
     def test_health_responsive_under_concurrency(self):
         lats, stop = [], False
 
