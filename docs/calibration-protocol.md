@@ -19,6 +19,13 @@ scores across the full range (Act 6). Any element changing = full
 recalibration, not an adjustment.
 
 ## 2. Control runs (the noise floor of "nothing changed")
+- **Health attestation prerequisite (Sammy):** a profile never graduates to
+  `diurnal_verified` until a human (or QA with narrator-assist, caveated) has
+  eyeballed baseline≠live at least once and the reason is recorded in profile
+  metadata (`band0: rotation (attested DATE)` or defect filed). Tolerance
+  learning must not eat unadjudicated "most likely rotation" — calibration
+  laundering a real current defect is the blindfold failure §4 rejects,
+  arriving through training data instead of the threshold.
 - Per baseline: **N ≥ 5** captures+diffs of live vs baseline,
   `run_history.kind = 'control'`.
 - **Diurnal coverage (Sammy 3):** initial controls spread across ≥ 24 h
