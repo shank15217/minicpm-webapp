@@ -44,6 +44,22 @@ recalibration, not an adjustment.
 - Alert rule candidate: `page_sim < DET_PASS_SIM` AND k-worst (§3) AND band not
   inside its learned tolerance. `DET_PASS_SIM=0.995` remains a placeholder
   until control distributions exist for ≥ 3 real baselines.
+- **Disposition rule (Sammy + measured 2026-10-15): band noise width ≥
+  smallest-defacement delta ⇒ pixel channel insufficient; content anchor
+  REQUIRED (masking-with-flag as fallback).** Evidence: fhlb band-0 control
+  sims span 0.8281–0.9688 (5 captures), while a 1.3%-area banner overlay
+  moves band-0 sim by only **0.016** on a rotating page (0.8594→0.8438,
+  reproduced at two settle times) — the defacement signal is ~4× smaller
+  than the rotation noise. A learned tolerance that covers rotation (floor
+  ~0.828) therefore sleeps through a hero-banner defacement, while
+  meanwhile the clean rotation can itself alert below a static threshold.
+  Content anchor = §5 single-image narrator pass over the band with a
+  mechanical factual checklist (headline present, nav items present,
+  branding colors in range), booleans parsed by schema, verdict rule
+  mechanical (element missing ⇒ alert). Doctrine stays intact: single-image
+  facts, never pairwise judgment. The checklist mode gets its OWN mini
+  calibration (honesty vs blanked band, prompt-A/B per Act 6) before it may
+  feed alerts.
 
 ## 3. Aggregation: k-worst — sized from DET noise, not VLM noise (Sammy 1)
 Correction to draft v1: the ~2%/band phantom rate (1-in-48) is a **VLM-band**
@@ -61,7 +77,12 @@ was exactly the founding-sin class this room hunts.
 Replayed against every calibrated baseline: blank-band (≥ 25% region whited,
 det sim 0.259), banner overlay (1.3% area → 0.969), half-page white, **plus a
 smallest-detectable-defacement cell (Sammy 4): single-line text swap ≈ 0.1%
-area, run at the calibrated threshold.** Pass = k-worst flags each ≥ 2
+area, run at the calibrated threshold.** AND **defacement-inside-dynamic-band
+(Sammy 5): the banner cell replayed specifically on bands whose learned noise
+width triggered the §2 content-anchor rule** — passing banner/blank/halfwhite
+on static bands while sleeping through a dynamic-band banner is a §4 rejection
+by the blindfold clause, and as measured 2026-10-15 the pixel channel alone
+predictably fails this cell, which is the point of running it.** Pass = k-worst flags each ≥ 2
 consecutive scheduled checks. Separation required: defaced-p5 < control-p95 per
 band, computed, not eyeballed. **Published sensitivity floor:** tonight's own
 curve (1.3% area → 0.969) implies sub-1% edits likely pass a 0.995 threshold —
