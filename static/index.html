@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MiniCPM-V Image Analyzer</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 1rem; background: #f5f5f5; }
+    .container { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #333; }
+    form { margin: 1.5rem 0; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input, textarea, select, button { width: 100%; padding: 0.7rem; margin-top: 0.3rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; box-sizing: border-box; }
+    button { background: #0066cc; color: white; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { background: #0055aa; }
+    #result { margin-top: 2rem; padding: 1rem; background: #f9f9f9; border-radius: 8px; white-space: pre-wrap; }
+    #preview { max-width: 100%; margin-top: 1rem; border-radius: 8px; }
+    .note { font-size: 0.9rem; color: #666; margin-top: 1rem; }
+    .mode-note { font-size: 0.85rem; color: #555; margin-top: 0.2rem; }
+    .checkbox-row { display: flex; align-items: center; margin-top: 0.8rem; }
+    .checkbox-row input { width: auto; margin-right: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MiniCPM-V 4.7 Image Analyzer</h1>
+    <p>Upload a reference image or capture a baseline snapshot of a healthy site. Later checks compare the live page against the stored baseline (visual + text) for health / defacement monitoring.</p>
+
+    <form id="analyzeForm">
+      <label>Vision mode</label>
+      <select id="mode">
+        <option value="16x" selected>16x (faster, fewer tokens — good for screening)</option>
+        <option value="4x">4x (more detail — better for OCR, charts, dense docs)</option>
+      </select>
+      <div class="mode-note">Requires both llama-server instances if you want to switch modes.</div>
+
+      <label>Reference image (optional if using stored baseline)</label>
+      <input type="file" id="file" accept="image/*">
+
+      <label>URL</label>
+      <input type="url" id="url" placeholder="https://example.com">
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="capture_baseline">
+        <label for="capture_baseline" style="margin:0; font-weight:normal;">Capture as baseline (take live screenshot and store it as the healthy reference for this URL)</label>
+      </div>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="visual_verify" checked>
+        <label for="visual_verify" style="margin:0; font-weight:normal;">Visual verification (screenshot the live page and compare images)</label>
+      </div>
+
+      <label>Optional custom prompt</label>
+      <textarea id="prompt" rows="2" placeholder="Describe this image and classify it..."></textarea>
+
+      <button type="submit">Analyze / Check</button>
+    </form>
+
+    <img id="preview" style="display:none;" alt="Preview">
+    <div id="result"></div>
+    <p class="note">
+      Backend expects llama-server instances:<br>
+      • 16x on port 8080 (mmproj-model-f16.gguf)<br>
+      • 4x on port 8081 (mmproj-model-f16-4x.gguf)<br>
+      Accessible over the network on port 8000.<br>
+      Visual verification and baselines require Playwright + Chromium (see README).<br>
+      Baselines are stored locally in the <code>baselines/</code> folder.
+    </p>
+  </div>
+
+  <script>
+    const form = document.getElementById('analyzeForm');
+    const fileInput = document.getElementById('file');
+    const preview = document.getElementById('preview');
+    const resultDiv = document.getElementById('result');
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (file) {
+        preview.src = URL.createObjectURL(file);
+        preview.style.display = 'block';
+      } else {
+        preview.style.display = 'none';
+      }
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const mode = document.getElementById('mode').value;
+      const visual = document.getElementById('visual_verify').checked;
+      const capture = document.getElementById('capture_baseline').checked;
+      const url = document.getElementById('url').value;
+      resultDiv.textContent = capture
+        ? `Capturing baseline for ${url || 'URL'} with ${mode}...`
+        : `Checking with ${mode} vision tower${visual ? ' + visual verification' : ''}... (this may take 15-60s)`;
+
+      const formData = new FormData();
+      if (fileInput.files[0]) formData.append('file', fileInput.files[0]);
+      formData.append('mode', mode);
+      formData.append('visual_verify', visual ? 'true' : 'false');
+      formData.append('capture_baseline', capture ? 'true' : 'false');
+      if (url) formData.append('url', url);
+      const prompt = document.getElementById('prompt').value;
+      if (prompt) formData.append('prompt', prompt);
+
+      try {
+        const resp = await fetch('/analyze', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.error) {
+          resultDiv.textContent = 'Error: ' + data.error;
+        } else {
+          let text = '';
+          if (data.elapsed_seconds !== undefined) {
+            text += `Processing time: ${data.elapsed_seconds}s\n\n`;
+          }
+          if (data.baseline_captured) {
+            text += `Baseline captured for ${data.url}\nKey: ${data.baseline_key}\n${data.message}\n\nDescription of baseline:\n${data.description}\n`;
+          } else {
+            text += `Mode: ${data.mode}\n`;
+            if (data.using_stored_baseline) text += `Using stored baseline for this URL\n`;
+            if (data.description_source) text += `Description source: ${data.description_source}\n`;
+            text += `\nDescription:\n${data.description}\n`;
+            if (data.verification) {
+              text += `\n--- Verification ---\nURL: ${data.url}\n`;
+              text += `Baseline source: ${data.baseline_source || 'uploaded'}\n`;
+              text += `Visual screenshot used: ${data.visual_verification_used ? 'yes' : 'no'}\n`;
+              if (data.screenshot_error) text += `Screenshot note: ${data.screenshot_error}\n`;
+              text += `\n${data.verification}\n`;
+            }
+          }
+          resultDiv.textContent = text;
+        }
+      } catch (err) {
+        resultDiv.textContent = 'Request failed: ' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
