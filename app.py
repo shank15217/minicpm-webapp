@@ -229,11 +229,10 @@ def load_baseline(url: str) -> Optional[dict]:
     return entry
 
 
-def image_to_base64(image_bytes: bytes) -> str:
+def image_to_base64(image_bytes: bytes, max_size: int = 1280) -> str:
     """Convert image bytes to base64 data URL."""
     try:
         img = Image.open(io.BytesIO(image_bytes))
-        max_size = 1280
         if max(img.size) > max_size:
             img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
@@ -244,6 +243,48 @@ def image_to_base64(image_bytes: bytes) -> str:
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     return f"data:image/png;base64,{b64}"
+
+
+def narration_crops(ref_bytes: bytes, live_bytes: bytes, det: dict,
+                    max_crops: int = 3) -> list:
+    """Changed-region crops for the narrator: (label, baseline_url, live_url).
+
+    Sammy/Quinn architecture finding: a full f16-tower page is a huge prompt
+    (837 visual tokens for 640x480; full 1280x7463 pages dominate the
+    truncation story) and pairwise same-or-different is corrupted anyway.
+    The narrator gets ONLY the bands the deterministic diff flagged, worst
+    first, up to max_crops — same pixels a human would open the alert for,
+    ~10% of the token cost per crop.
+    """
+    bands = det.get("changed_bands") or []
+    sims = det.get("band_sims") or []
+    ordered = sorted(range(len(bands)), key=lambda i: sims[i] if i < len(sims) else 0.0)
+    try:
+        a = Image.open(io.BytesIO(ref_bytes))
+        b = Image.open(io.BytesIO(live_bytes))
+    except Exception:
+        return []
+    out = []
+    for i in ordered[:max_crops]:
+        try:
+            y0, y1 = bands[i].split("-")
+            y0, y1 = int(y0), int(y1)
+        except (ValueError, AttributeError):
+            continue
+        crops = []
+        for img in (a, b):
+            h = min(y1, img.size[1])
+            if h <= y0:
+                crops = []
+                break
+            c = img.crop((0, y0, img.size[0], h))
+            buf = io.BytesIO()
+            c.convert("RGB").save(buf, format="PNG")
+            # max_size=1400: bands are 1280x<=1344; no crush needed.
+            crops.append(image_to_base64(buf.getvalue(), max_size=1400))
+        if crops:
+            out.append((bands[i], crops[0], crops[1]))
+    return out
 
 
 # Shared async HTTP client; created in lifespan startup (per event loop),
@@ -302,6 +343,7 @@ async def call_llama(messages: list, mode: str = "16x") -> dict:
         "fingerprint": data.get("system_fingerprint", ""),
         "model": data.get("model", ""),
         "backend_url": server_url,
+        "usage": data.get("usage") or {},
     }
 
 
@@ -527,6 +569,7 @@ async def analyze(
         result["page_text_preview"] = page_text[:500] + "..." if len(page_text) > 500 else page_text
 
         screenshot_data_url = None
+        screenshot_bytes = None
         det = None
         if do_visual:
             screenshot_bytes = await capture_screenshot(url)
@@ -553,6 +596,10 @@ async def analyze(
         # the deterministic diff owns WHETHER; the VLM never answers
         # same-or-different at any prompt wording — it only narrates once a
         # change is already established, and is skipped entirely otherwise.
+        # v0.4.1: when the diff located changed bands, the narrator gets
+        # ONLY those crops (worst-first, max 3), never the full page — a
+        # full f16 page is an enormous prompt and pairwise judgment is
+        # corrupted anyway.
         llm = None
         if det is not None and not det.get("error") and not det["changed"]:
             result["verification"] = (
@@ -566,15 +613,34 @@ async def analyze(
                 "deterministic-band-sim (v0.4 verdict; threshold provisional "
                 "until v0.5 control calibration)")
         else:
-            verify_content = [
-                {"type": "text", "text": "Baseline / reference image:"},
-                {"type": "image_url", "image_url": {"url": ref_data_url}},
-            ]
-            if screenshot_data_url:
-                verify_content.extend([
-                    {"type": "text", "text": "Live page screenshot:"},
-                    {"type": "image_url", "image_url": {"url": screenshot_data_url}},
-                ])
+            crops = None
+            if det is not None and not det.get("error") and det.get("changed_bands") and screenshot_bytes:
+                crops = await anyio.to_thread.run_sync(
+                    functools.partial(narration_crops, ref_bytes, screenshot_bytes, det))
+            if crops:
+                verify_content = []
+                for label, b_url, l_url in crops:
+                    verify_content.extend([
+                        {"type": "text", "text": f"Baseline region {label}:"},
+                        {"type": "image_url", "image_url": {"url": b_url}},
+                        {"type": "text", "text": f"Live region {label}:"},
+                        {"type": "image_url", "image_url": {"url": l_url}},
+                    ])
+                result["narration_input"] = {
+                    "mode": "changed-bands-crops",
+                    "crops": [c[0] for c in crops],
+                }
+            else:
+                verify_content = [
+                    {"type": "text", "text": "Baseline / reference image:"},
+                    {"type": "image_url", "image_url": {"url": ref_data_url}},
+                ]
+                if screenshot_data_url:
+                    verify_content.extend([
+                        {"type": "text", "text": "Live page screenshot:"},
+                        {"type": "image_url", "image_url": {"url": screenshot_data_url}},
+                    ])
+                result["narration_input"] = {"mode": "full-page-payload"}
 
             verify_content.append({
                 "type": "text",
@@ -596,6 +662,9 @@ async def analyze(
                     status_code=502,
                 )
             result["verification"] = llm["content"]
+            # Prompt-cost visibility: crops vs full-page payloads must be
+            # auditable, not folklore.
+            result["narration_prompt_tokens"] = llm["usage"].get("prompt_tokens")
             result["verification_quality"] = (
                 "det-changed verdict + vlm-narration (v0.4: act on "
                 "deterministic similarity; narration is advisory and may "
