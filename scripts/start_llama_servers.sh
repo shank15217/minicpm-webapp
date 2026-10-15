@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # start_llama_servers.sh — start the two llama-server instances MiniCPM-V
 # vision backends the app expects:
-#   :8080 = 16x mmproj (fast, fewer visual tokens)   :8081 = 4x mmproj (detail)
+#   :8080 = 16x mmproj (full high-res, MORE visual tokens — measured 837 vs
+#           228 on a 640x480 image, Sammy 2026-10-15)
+#   :8081 = 4x mmproj  (lighter, fewer visual tokens)
 #
 # Configurable via env (defaults match the current pvellm deployment):
 #   LLAMA_BIN      path to llama-server binary
@@ -12,7 +14,12 @@ set -euo pipefail
 
 LLAMA_BIN="${LLAMA_BIN:-/usr/local/bin/llama-server}"
 MODEL_DIR="${MODEL_DIR:-/AITOOLCHAIN/models/MiniCPM-V-4.7}"
-GGUF="${GGUF:-MiniCPM-V-4_7-1B-Q4_K_M.gguf}"
+# Q8_0 per owner ruling (2026-10-15): best-quality quant of MiniCPM-V 4.7.
+# Set GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf to roll back.
+GGUF="${GGUF:-MiniCPM-V-4_7-1B-Q8_0.gguf}"
+# Tower naming note: MiniCPM-V ships two vision towers. The plain
+# mmproj-model-f16.gguf IS the 16x (full high-res) tower — there is no
+# separate "*16x*.gguf" file; "-4x" is the lighter 4x tower.
 MMPROJ_16X="${MMPROJ_16X:-mmproj-model-f16.gguf}"
 MMPROJ_4X="${MMPROJ_4X:-mmproj-model-f16-4x.gguf}"
 CTX="${CTX:-8192}"
