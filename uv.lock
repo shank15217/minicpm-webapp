@@ -514,9 +514,10 @@ wheels = [
 
 [[package]]
 name = "minicpm-webapp"
-version = "0.1.0"
+version = "0.2.1"
 source = { virtual = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pillow" },
@@ -533,6 +534,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pillow", specifier = ">=10.4.0" },

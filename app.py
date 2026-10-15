@@ -1,5 +1,7 @@
 import asyncio
 import base64
+from contextlib import asynccontextmanager
+import functools
 import hashlib
 import io
 import json
@@ -11,13 +13,30 @@ import time
 import datetime
 from typing import Optional
 
+import anyio
 import httpx
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-app = FastAPI(title="MiniCPM-V Image Analyzer")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Client is created per running app instance (per event loop), not at
+    module import — survives TestClient/per-test-loop usage (Sammy finding 2)."""
+    global _http
+    _http = httpx.AsyncClient(
+        timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True
+    )
+    init_run_db()
+    try:
+        yield
+    finally:
+        await _http.aclose()
+
+
+app = FastAPI(title="MiniCPM-V Image Analyzer", lifespan=lifespan)
 
 # Serve static files (HTML)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -119,6 +138,13 @@ CREATE INDEX IF NOT EXISTS idx_run_history_url ON run_history (url);
 
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(RUNS_DB_PATH)
+    # WAL: readers never block on the single writer, and fsync is cheap.
+    # busy_timeout: concurrent writers wait instead of raising
+    # 'database is locked' — a completed check must never 500 on history
+    # bookkeeping (Sammy finding 1; scheduled checks in v0.3+ create
+    # concurrent writers).
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=2000")
     return conn
 
 
@@ -204,22 +230,16 @@ def image_to_base64(image_bytes: bytes) -> str:
     return f"data:image/png;base64,{b64}"
 
 
-# Shared async HTTP client (pooled; keeps the event loop free — defect S7).
-# Created at import time (no loop needed for construction), closed on shutdown.
-_http: httpx.AsyncClient = httpx.AsyncClient(
-    timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True
-)
+# Shared async HTTP client; created in lifespan startup (per event loop),
+# closed on shutdown. Not constructed at module import time.
+_http: Optional[httpx.AsyncClient] = None
 
 
-@app.on_event("startup")
-async def _startup():
-    init_run_db()
-
-
-@app.on_event("shutdown")
-async def _shutdown():
-    if _http:
-        await _http.aclose()
+async def _record(**fields) -> None:
+    """Thread-pooled run-history insert: fsync happens off the event loop so
+    a slow disk or WAL writer collision can never stall request handling
+    (Sammy finding 1)."""
+    await anyio.to_thread.run_sync(functools.partial(record_run, **fields))
 
 
 async def call_llama(messages: list, mode: str = "16x") -> dict:
@@ -394,7 +414,7 @@ async def analyze(
         try:
             llm = await call_llama(messages, mode=mode)
         except CheckFailed as e:
-            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+            await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
                        elapsed_s=round(time.perf_counter() - start_time, 2))
             return JSONResponse(
                 {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
@@ -403,7 +423,7 @@ async def analyze(
         description = llm["content"]
 
         key = save_baseline(url, screenshot_bytes, description=description)
-        record_run(
+        await _record(
             url=url, baseline_key=key,
             baseline_sha256=hashlib.sha256(screenshot_bytes).hexdigest(),
             mode=mode, backend_url=llm["backend_url"], model=llm["model"],
@@ -467,7 +487,7 @@ async def analyze(
         try:
             llm = await call_llama(messages, mode=mode)
         except CheckFailed as e:
-            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+            await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
                        elapsed_s=round(time.perf_counter() - start_time, 2))
             return JSONResponse(
                 {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
@@ -481,7 +501,7 @@ async def analyze(
         try:
             page_text = await fetch_page_text(url)
         except CheckFailed as e:
-            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+            await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
                        elapsed_s=round(time.perf_counter() - start_time, 2))
             return JSONResponse(
                 {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
@@ -523,7 +543,7 @@ async def analyze(
         try:
             llm = await call_llama(verify_messages, mode=mode)
         except CheckFailed as e:
-            record_run(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
+            await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
                        page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
                        elapsed_s=round(time.perf_counter() - start_time, 2))
             return JSONResponse(
@@ -535,7 +555,7 @@ async def analyze(
         # no alerts on prose confidence).
         result["verification_quality"] = "vlm-prose-advisory (v0.5 will add calibrated numeric score)"
         result["status"] = "OK"
-        record_run(
+        await _record(
             url=url,
             baseline_key=key_for_history if using_baseline else None,
             baseline_sha256=hashlib.sha256(ref_bytes).hexdigest() if using_baseline else None,

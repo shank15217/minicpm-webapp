@@ -47,6 +47,19 @@ What `install.sh` does (idempotent):
 > above via dnf *before* `playwright install chromium`, or Chromium fails with
 > missing-`libgbm`/`libnss3` errors at launch. `install.sh` handles both paths.
 
+Two more field-verified notes (virgin Rocky 10.2 VM rehearsal, QA-REPORT-3,
+SELinux Enforcing, install passed first try):
+
+- **"OS version not officially supported" fallback banner on RHEL is EXPECTED.**
+  Playwright publishes official Linux targets for Ubuntu/Debian only; on RHEL
+  it downloads the `ubuntu24.04` build and it works (Chromium 156 launched
+  headless under Enforcing SELinux with no policy changes). Don't chase it.
+- **Browser installs are `$HOME`-scoped.** `install.sh` run as root puts
+  Chromium in `/root/.cache/ms-playwright`. If the app later runs as a
+  different deploy user, re-run `uv run playwright install chromium` as that
+  user (or pre-seed its `$HOME/.cache/ms-playwright`), or it will fail to
+  find the browser at launch.
+
 ## Step 2 — llama.cpp + MiniCPM-V model
 
 The app is a client of two `llama-server` processes; they are NOT installed by
