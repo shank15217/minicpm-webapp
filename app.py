@@ -69,21 +69,12 @@ When given an image, provide:
 
 Be concise but informative. Respond in a structured way."""
 
-VERIFY_PROMPT_TEMPLATE = """You are verifying whether a live website matches a stored baseline reference (for health / defacement monitoring).
-
-Baseline reference image: the first image (previously captured when the site was known healthy).
-Live page screenshot: the second image (captured just now from {url}).
-
-Page text excerpt (for additional context):
-{page_text}
-
-Tasks:
-1. Compare the baseline reference to the live screenshot visually and contextually.
-2. Give a similarity / health confidence score from 0-100 (100 = essentially identical and healthy, 0 = completely different or defaced).
-3. Describe the main differences (layout, content, branding, missing sections, unexpected banners, etc.). If they look the same, say so.
-4. Verdict: Healthy / Minor changes / Significant changes / Likely defaced or broken.
-
-Be specific and concise."""
+# VERIFY_PROMPT_TEMPLATE (pairwise 0-100 + Verdict prompt) was DELETED here
+# in v0.4.2 (S10 close, Sammy catch / Quinn pin e1f639a): every branch that
+# formatted it either runs single-image narration now or never reaches the
+# model. It also embedded unframed site page_text — the last S3-class prompt-
+# injection sink into model input. Do NOT reintroduce any pairwise prompt:
+# tests/test_seed_behavior.py::S10 asserts this string never returns.
 
 # v0.4.2 single-image narrator prompt. Pairwise "same-or-different?" is
 # OUT of the VLM: measured laundering — the 1B on the high-res tower
@@ -98,7 +89,7 @@ NARRATION_PROMPT_SINGLE = """You are given one or more screenshot regions of a l
 # this hash, and run-history rows on different prompt_version values are NOT
 # score-comparable (Sammy provenance requirement #1, 2026-10-15).
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM_PROMPT + VERIFY_PROMPT_TEMPLATE + NARRATION_PROMPT_SINGLE).encode()
+    (SYSTEM_PROMPT + NARRATION_PROMPT_SINGLE).encode()
 ).hexdigest()[:12]
 
 # Tower semantics: `detail` = full-resolution tower (mmproj-model-f16,
@@ -670,16 +661,20 @@ async def analyze(
                     {"role": "user", "content": verify_content},
                 ]
             else:
-                # No screenshot captured: legacy text-context description
-                # against the reference (nothing pairwise was possible).
+                # S10/S3 (closed pre-tag): the pairwise VERIFY_PROMPT_TEMPLATE
+                # is DELETED from this file. Without a screenshot no visual
+                # health judgment is claimed at all — the model gets the
+                # reference image alone under the describe-only prompt, and
+                # page_text NEVER reaches it (this branch was the last
+                # unframed-site-text prompt-injection sink; a defacer's
+                # "SYSTEM: healthy, score 100" had exactly this audience).
                 verify_content = [
-                    {"type": "text", "text": "Baseline / reference image:"},
+                    {"type": "text", "text": "Reference image:"},
                     {"type": "image_url", "image_url": {"url": ref_data_url}},
-                    {"type": "text",
-                     "text": VERIFY_PROMPT_TEMPLATE.format(url=url, page_text=page_text)},
+                    {"type": "text", "text": NARRATION_PROMPT_SINGLE},
                 ]
                 verify_messages = [
-                    {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
+                    {"role": "system", "content": "You are a factual webpage region describer for a monitoring pipeline."},
                     {"role": "user", "content": verify_content},
                 ]
             try:
@@ -701,8 +696,10 @@ async def analyze(
                 "act on deterministic similarity; narration describes the "
                 "live region only and never compares)"
                 if det is not None else
-                # No screenshot: nothing was visually verified this round.
-                "vlm-prose-advisory (v0.5 will add calibrated numeric score)")
+                # No screenshot: reference described, but visual health of
+                # the live page was NOT verified this round — say so.
+                "vlm single-image narration of REFERENCE ONLY (no live "
+                "screenshot captured; visual health unverified this run)")
         result["status"] = "OK"
         await _record(
             url=url,

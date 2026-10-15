@@ -26,6 +26,7 @@ BASE_URL="${BASE_URL:?set BASE_URL to the throwaway instance}"
 declare -A MUST_CLOSED=(
     [v0.2.0]="S6 S6b S7"
     [v0.2.2]="S8"
+    [v0.4.2]="S10"
     [v0.3.0]="S1 S2 S2b"
     [v0.5.0]="S3 S4"
 )
