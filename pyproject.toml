@@ -28,8 +28,5 @@ dev = [
 [tool.uv]
 package = false
 
-[tool.pytest.ini_options]
-markers = [
-    "gpu: slow checks that invoke the vision-model verify path",
-]
-xfail_strict = true
+# NOTE: pytest config lives in pytest.ini (single source — pytest warns if
+# both exist). Keep it there.
