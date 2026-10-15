@@ -85,12 +85,28 @@ Tasks:
 
 Be specific and concise."""
 
+# v0.4.2 single-image narrator prompt. Pairwise "same-or-different?" is
+# OUT of the VLM: measured laundering — the 1B on the high-res tower
+# called a red-defacement crop pair "identical … score 100, Healthy"
+# (QA-REPORT-6 e2e, Q8/f16). The deterministic diff supplies the
+# comparison; the narrator only describes what is actually there, a
+# question it answers honestly. Corpus change => new PROMPT_VERSION:
+# run-history rows predating this are not narration-comparable, by design.
+NARRATION_PROMPT_SINGLE = """You are given one or more screenshot regions of a live webpage. For EACH region, describe factually: the main text, layout elements, colors, and any anomalies (blank areas, unexpected banners, error text, garbled content). Do NOT assign health scores or verdicts. Be specific and concise."""
+
 # Version stamp over the prompt corpus: any edit to the prompt text changes
 # this hash, and run-history rows on different prompt_version values are NOT
 # score-comparable (Sammy provenance requirement #1, 2026-10-15).
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM_PROMPT + VERIFY_PROMPT_TEMPLATE).encode()
+    (SYSTEM_PROMPT + VERIFY_PROMPT_TEMPLATE + NARRATION_PROMPT_SINGLE).encode()
 ).hexdigest()[:12]
+
+# Tower semantics: `detail` = full-resolution tower (mmproj-model-f16,
+# ~837 visual tokens on 640x480), `fast` = token-saving downsample tower
+# (mmproj-model-f16-4x, ~228 tokens). `16x`/`4x` are DEPRECATED aliases
+# (owner ruling 2026-10-15; naming debate settled by the same token
+# measurements — see start_llama_servers.sh header).
+MODE_ALIASES = {"detail": "detail", "fast": "fast", "16x": "detail", "4x": "fast"}
 
 
 class CheckFailed(Exception):
@@ -122,7 +138,7 @@ CREATE TABLE IF NOT EXISTS run_history (
     url               TEXT,
     baseline_key      TEXT,
     baseline_sha256   TEXT,                    -- digest of compared baseline PNG
-    mode              TEXT,                    -- 16x / 4x
+    mode              TEXT,                    -- detail / fast (legacy: 16x / 4x)
     backend_url       TEXT,                    -- llama-server used
     model             TEXT,                    -- model path reported by backend
     llama_fingerprint TEXT,                    -- llama.cpp system_fingerprint
@@ -299,7 +315,7 @@ async def _record(**fields) -> None:
     await anyio.to_thread.run_sync(functools.partial(record_run, **fields))
 
 
-async def call_llama(messages: list, mode: str = "16x") -> dict:
+async def call_llama(messages: list, mode: str = "detail") -> dict:
     """Call the appropriate llama-server. Returns a dict with:
     content, finish_reason, fingerprint, model, backend_url.
 
@@ -307,7 +323,9 @@ async def call_llama(messages: list, mode: str = "16x") -> dict:
     error prose as a result string. finish_reason == 'length' is a failure:
     truncated output must never be parsed downstream (Sammy rule (a)).
     """
-    server_url = LLAMA_SERVER_4X if mode == "4x" else LLAMA_SERVER_16X
+    # Resolve semantic mode (detail/fast) or legacy alias (16x/4x) to a
+    # backend. `detail`->16x server (f16, high-res); `fast`->4x server (coarse).
+    server_url = LLAMA_SERVER_4X if MODE_ALIASES.get(mode, "detail") == "fast" else LLAMA_SERVER_16X
     payload = {
         "model": "minicpm-v",
         "messages": messages,
@@ -423,7 +441,7 @@ async def analyze(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     prompt: Optional[str] = Form(None),
-    mode: Optional[str] = Form("16x"),
+    mode: Optional[str] = Form("detail"),
     visual_verify: Optional[str] = Form("true"),
     capture_baseline: Optional[str] = Form("false"),
 ):
@@ -431,12 +449,13 @@ async def analyze(
     Analyze an image and/or verify a URL.
     - capture_baseline=true + url: take live screenshot and store it as the healthy baseline for that URL.
     - Otherwise: compare live page against stored baseline (if any) or against an uploaded reference image.
-    mode: "16x" or "4x"
+    mode: "detail" (full-res tower) or "fast" (token-saving tower);
+          legacy aliases "16x"->detail, "4x"->fast still accepted.
     visual_verify: whether to capture a live screenshot for comparison.
     """
-    mode = (mode or "16x").lower()
-    if mode not in ("16x", "4x"):
-        mode = "16x"
+    mode = (mode or "detail").lower()
+    # Semantic names preferred; `16x`/`4x` accepted as deprecated aliases.
+    mode = MODE_ALIASES.get(mode, "detail")
 
     start_time = time.perf_counter()
 
@@ -618,39 +637,51 @@ async def analyze(
                 crops = await anyio.to_thread.run_sync(
                     functools.partial(narration_crops, ref_bytes, screenshot_bytes, det))
             if crops:
+                # v0.4.2: single-image narration — the narrator sees ONLY
+                # the live regions the diff flagged. Baseline images are
+                # NOT sent: pairwise same-or-different is the corrupted
+                # mode; the diff already settled whether things changed.
                 verify_content = []
-                for label, b_url, l_url in crops:
+                for label, _b_url, l_url in crops:
                     verify_content.extend([
-                        {"type": "text", "text": f"Baseline region {label}:"},
-                        {"type": "image_url", "image_url": {"url": b_url}},
                         {"type": "text", "text": f"Live region {label}:"},
                         {"type": "image_url", "image_url": {"url": l_url}},
                     ])
                 result["narration_input"] = {
-                    "mode": "changed-bands-crops",
+                    "mode": "single-image-describe",
                     "crops": [c[0] for c in crops],
                 }
             else:
                 verify_content = [
+                    {"type": "text", "text": "Live page screenshot:"},
+                    {"type": "image_url", "image_url": {"url": screenshot_data_url or ref_data_url}},
+                ]
+                result["narration_input"] = {"mode": "single-image-full-page"}
+
+            if det is not None:
+                # Narration mode: describe, never judge (comparison comes
+                # from the deterministic diff, already computed).
+                verify_content.append({
+                    "type": "text",
+                    "text": NARRATION_PROMPT_SINGLE
+                })
+                verify_messages = [
+                    {"role": "system", "content": "You are a factual webpage region describer for a monitoring pipeline."},
+                    {"role": "user", "content": verify_content},
+                ]
+            else:
+                # No screenshot captured: legacy text-context description
+                # against the reference (nothing pairwise was possible).
+                verify_content = [
                     {"type": "text", "text": "Baseline / reference image:"},
                     {"type": "image_url", "image_url": {"url": ref_data_url}},
+                    {"type": "text",
+                     "text": VERIFY_PROMPT_TEMPLATE.format(url=url, page_text=page_text)},
                 ]
-                if screenshot_data_url:
-                    verify_content.extend([
-                        {"type": "text", "text": "Live page screenshot:"},
-                        {"type": "image_url", "image_url": {"url": screenshot_data_url}},
-                    ])
-                result["narration_input"] = {"mode": "full-page-payload"}
-
-            verify_content.append({
-                "type": "text",
-                "text": VERIFY_PROMPT_TEMPLATE.format(url=url, page_text=page_text)
-            })
-
-            verify_messages = [
-                {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
-                {"role": "user", "content": verify_content},
-            ]
+                verify_messages = [
+                    {"role": "system", "content": "You are a website health / defacement detection assistant comparing a baseline reference to a live page."},
+                    {"role": "user", "content": verify_content},
+                ]
             try:
                 llm = await call_llama(verify_messages, mode=mode)
             except CheckFailed as e:
@@ -666,9 +697,9 @@ async def analyze(
             # auditable, not folklore.
             result["narration_prompt_tokens"] = llm["usage"].get("prompt_tokens")
             result["verification_quality"] = (
-                "det-changed verdict + vlm-narration (v0.4: act on "
-                "deterministic similarity; narration is advisory and may "
-                "confabulate)"
+                "det-changed verdict + vlm single-image narration (v0.4.2: "
+                "act on deterministic similarity; narration describes the "
+                "live region only and never compares)"
                 if det is not None else
                 # No screenshot: nothing was visually verified this round.
                 "vlm-prose-advisory (v0.5 will add calibrated numeric score)")
