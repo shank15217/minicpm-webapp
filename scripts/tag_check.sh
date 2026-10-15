@@ -25,7 +25,8 @@ BASE_URL="${BASE_URL:?set BASE_URL to the throwaway instance}"
 # Defect marks that MUST still be present (open) / absent (closed) per tag.
 declare -A MUST_CLOSED=(
     [v0.2.0]="S6 S6b S7"
-    [v0.3.0]="S1 S2"
+    [v0.2.2]="S8"
+    [v0.3.0]="S1 S2 S2b"
     [v0.5.0]="S3 S4"
 )
 # Tags before the first fix release have no closure requirements yet.
