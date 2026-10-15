@@ -224,3 +224,58 @@ class TestS2bRedirectSSRF:
         norm = r.text.replace("\\", "").replace(" ", "")
         leaked = '"status":"ok"' in norm
         assert r.status_code == 400 or not leaked, r.text[:300]
+
+
+class TestS8DownscaleCrush:
+    """S8 (Paul, Layer-3 finding 2026-10-15): verify-path `image_to_base64`
+    thumbnail-fits full-page screenshots into 1280px — a 1280x7463 baseline
+    becomes ~219px wide, so defacement on any long page is unreadable to the
+    VLM and silently scores healthy. Fix = band tiling + fail-loud aggregation
+    (MUST_CLOSED[v0.2.2]).
+
+    Gate: synthetic ~5400px page, readable tile #4; baseline captured healthy,
+    then live variant swapped to a red HACKED banner in tile #4. The verify
+    path MUST notice. Requires the tall-page server ON the app host:
+        python tests/helpers/tallpage_server.py 8013
+    then set TALLPAGE=1 TALLPAGE_URL=http://127.0.0.1:8013/page
+    """
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(os.environ.get("TALLPAGE") != "1",
+                        reason="start tests/helpers/tallpage_server.py, set TALLPAGE=1")
+    @pytest.mark.xfail(reason="DEFECT S8: thumbnail-fit crushes tall pages; verify "
+                              "path blind to tile-N defacement (app.py:220-222, "
+                              "baseline 1280x7463 -> ~219px). v0.2.2 tiling -> XPASS")
+    def test_tall_page_tile4_defacement_detected(self):
+        srv = os.environ.get("TALLPAGE_URL", "http://127.0.0.1:8013/page").replace("/page", "")
+        r = requests.get(f"{srv}/heal", timeout=10)
+        assert r.ok
+        cap = _analyze(url=f"{srv}/page", capture="true")
+        assert cap.status_code == 200, cap.text[:200]
+        assert requests.get(f"{srv}/deface", timeout=10).ok
+        try:
+            v = _analyze(url=f"{srv}/page", visual="true", timeout=300)
+            assert v.status_code == 200, v.text[:200]
+            body = v.text.upper()
+            noticed = ("HACKED" in body or "DEFAC" in body
+                       or "BANNER" in body or "SIGNIFICANT" in body)
+            assert noticed, f"verify path blind to tile-4 defacement: {body[:200]}"
+        finally:
+            requests.get(f"{srv}/heal", timeout=10)
+
+
+class TestS10NoPairwiseAnywhere:
+    """S10 (Sammy finding, QA-pinned): the det-is-None (no screenshot) branch
+    still shipped the pairwise VERIFY_PROMPT_TEMPLATE with unframed page_text —
+    the measured laundering prompt (blanked page -> 'score 100, Healthy') and
+    the last S3 model-input injection sink. Gate is mechanical: once the
+    pairwise template is deleted from the narrator path, remove the xfail.
+    """
+
+    @pytest.mark.xfail(strict=True, reason="S10 open in v0.4.2: VERIFY_PROMPT_TEMPLATE still formatted at the det-is-None branch")
+    def test_no_pairwise_prompt_format_call_remains(self):
+        src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+        assert "VERIFY_PROMPT_TEMPLATE.format(" not in src, (
+            "pairwise verification prompt is still sent somewhere — "
+            "narrator must be single-image on every branch (diff supplies comparison)")
+
