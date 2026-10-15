@@ -128,13 +128,14 @@ overwrite baselines by design (that is the defect under test).
   stdout/stderr fds close. Launch detached:
   `setsid uv run uvicorn app:app --port 8010 >/tmp/app.log 2>&1 </dev/null &`
   — or use the systemd units above, which are the recommended run mode.
-- **SELinux (RHEL-family, enforcing):** on pvellm (Rocky 10, enforcing) the app
-  runs unconfined and SELinux has NOT blocked binding or Chromium launches —
-  but a hardened/confined policy is a different story: confined domains need
-  `sudo semanage port -a -t http_port_t -p tcp 8000`
-  (`policycoreutils-python-utils`) and possibly `httpd_can_network_connect`.
-  Binding `127.0.0.1` sidesteps this entirely (recommended posture until v0.3
-  auth lands). The virgin-VM rehearsal (QA-REPORT-2 follow-up) is the proof.
+- **SELinux (RHEL-family):** pvellm runs with SELinux **Disabled** (verified
+  `getenforce`), so it has never been proven against this app — the
+  virgin-VM rehearsal (QA-REPORT-2 follow-up) is the real test. If your box is
+  **Enforcing** and something fails (bind, Chromium sandbox, outbound fetch),
+  check `ausearch -m avc -ts recent` first; confined setups may need
+  `semanage port -a -t http_port_t -p tcp 8000` and
+  `setsebool -P httpd_can_network_connect 1`. Binding `127.0.0.1` limits the
+  surface (recommended posture until v0.3 auth lands).
 - **uv venvs contain no pip.** `python -m pip ...` inside `.venv` fails; use
   `uv sync`, `uv pip`, or `uv run <cmd>`.
 
