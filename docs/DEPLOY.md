@@ -116,6 +116,28 @@ TAG=v0.2.0 BASE_URL=... ./scripts/tag_check.sh                          # mechan
 Never point `WRITE_PROBES=1` at a production baseline store — the S1 probes
 overwrite baselines by design (that is the defect under test).
 
+## Troubleshooting (field notes, pvellm/Orange Pi ops)
+
+- **`pkill -f '<pattern>'` over ssh can self-kill the session.** If the ssh
+  command text itself contains the target command-line literally (e.g.
+  `pkill -f "uvicorn app:app --port 8010"`), the pattern matches the remote
+  `bash -c` process and you get exit 255 mid-script — orphaning whatever ran
+  next. Portable fix: kill by port — `fuser -k 8010/tcp` — or match on
+  `pgrep -f` output filtered by PID.
+- **Backgrounded uvicorn over ssh holds the session open** until the child's
+  stdout/stderr fds close. Launch detached:
+  `setsid uv run uvicorn app:app --port 8010 >/tmp/app.log 2>&1 </dev/null &`
+  — or use the systemd units above, which are the recommended run mode.
+- **SELinux (RHEL-family, enforcing):** on pvellm (Rocky 10, enforcing) the app
+  runs unconfined and SELinux has NOT blocked binding or Chromium launches —
+  but a hardened/confined policy is a different story: confined domains need
+  `sudo semanage port -a -t http_port_t -p tcp 8000`
+  (`policycoreutils-python-utils`) and possibly `httpd_can_network_connect`.
+  Binding `127.0.0.1` sidesteps this entirely (recommended posture until v0.3
+  auth lands). The virgin-VM rehearsal (QA-REPORT-2 follow-up) is the proof.
+- **uv venvs contain no pip.** `python -m pip ...` inside `.venv` fails; use
+  `uv sync`, `uv pip`, or `uv run <cmd>`.
+
 ## Security posture (v0.1 known limits — read before exposing the port)
 
 - **No authentication.** Anyone who can reach :8000 can overwrite baselines
