@@ -112,9 +112,16 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
                     "anchor_status": "anchorcheck qualified for BUILD (mini-cal green); not yet certified to alert"}
         else:
             disp = {"state": "widened", "alert_below": round(bp95 - margin, 4)}
+        # Degeneracy disclosure (Sammy/Quinn harvest): nearest-rank p95 at
+        # N<=20 is at or near the worst observed capture — a "widened"
+        # tolerance early on literally means "worst lucky capture minus
+        # margin". The number that ships must say so in the artifact.
+        stat = f"nearest-rank-p95(N={len(sims)})"
+        if len(sims) <= 20 and bp95 == max(sims):
+            stat += "==max_observed(DEGENERATE: tolerance anchored to worst capture)"
         bands.append({"band": bi, "n": len(sims), "raw_min": round(bmin, 4),
                       "raw_p95": round(bp95, 4), "noise_width": width,
-                      "dynamic": dynamic, **disp})
+                      "dynamic": dynamic, "statistic": stat, **disp})
 
     n = len(rows)
     hours = sorted({hour_of(r["ts"]) for r in rows if hour_of(r["ts"]) >= 0})

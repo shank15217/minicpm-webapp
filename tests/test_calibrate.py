@@ -244,3 +244,30 @@ def _attested():
     return {"status": "attested-rotation-provisional",
             "attested_by": "qaquinn (narrator-assisted)",
             "human_confirmation_needed": "is hero rotation expected? (y/N)"}
+
+
+def test_statistic_field_discloses_p95_degeneracy_small_n():
+    """Sammy harvest, pinned: at small N nearest-rank p95 IS the worst
+    observed capture; the shipped profile number must say so in the artifact
+    that carries it, not only in a protocol footnote."""
+    runs = [[v] for v in (0.990, 0.993, 0.992, 0.991, 0.994)]   # 5 runs, band-0 sims
+    prof = C.build_profile("stat5", rows_for("stat5", runs, hours=[0, 6, 12, 18, 23]),
+                           0.995, 0.005, 5, _attested())
+    b0 = prof["bands"][0]
+    assert b0["n"] == 5
+    assert b0["raw_p95"] == 0.994                     # nearest-rank p95 == worst capture
+    assert "DEGENERATE" in b0["statistic"] and "N=5" in b0["statistic"]
+
+
+def test_statistic_no_degeneracy_stamp_when_p95_not_max():
+    """The stamp is a fact about the statistic, not a mood: at N=20 with
+    distinct values p95 (19th order statistic of sorted 20) != max -> no
+    stamp even though N <= 20."""
+    sims = [round(0.990 + 0.0001 * i, 4) for i in range(20)]
+    prof = C.build_profile("stat20",
+                           rows_for("stat20", [[v] for v in sims],
+                                    hours=[h % 24 for h in range(20)]),
+                           0.995, 0.005, 5, _attested())
+    b0 = prof["bands"][0]
+    assert b0["raw_p95"] != max(sims)          # nearest-rank at N=20 is NOT the max
+    assert "DEGENERATE" not in b0["statistic"]
