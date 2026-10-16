@@ -163,8 +163,13 @@ thresholds as raw.
 
 ## 4. Where to look at everything
 ```bash
-sqlite3 /root/minicpm-webapp/baselines/runs.db \
-  "SELECT id,ts,url,status,error_code,det_similarity,det_changed_bands FROM run_history ORDER BY id DESC LIMIT 10;"
+# pvellm has no sqlite3 CLI — python3 reads the PROD store (absolute path;
+# the U4 snippet's relative 'baselines/runs.db' assumes you cd into a repo
+# clone first — same file layout, pick by which machine you're standing on):
+python3 -c "import sqlite3; [print(r) for r in sqlite3.connect(
+  '/root/minicpm-webapp/baselines/runs.db').execute(
+  'SELECT id,ts,url,status,error_code,det_similarity,det_changed_bands \
+FROM run_history ORDER BY id DESC LIMIT 10')]"
 tail -5 /root/mpw-calibration/batch.log        # 6h control batch (cron, labeled, removable)
 docs/calibration-protocol.md                   # the v0.5 rules the numbers above cite
 ```
