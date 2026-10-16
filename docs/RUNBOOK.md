@@ -64,10 +64,16 @@ that does NOT rotate (example.com). On a copy of the baseline PNG, paint a
 big obvious change (black half, banner bar), serve the copy from a local
 HTTP server, and point the monitor at it via a throwaway instance:
 ```bash
+# serve your poisoned copy first (nothing listens on 18080 until you do):
+mkdir -p /tmp/u2 && cp <your-poisoned-page.png> /tmp/u2/page.png
+(cd /tmp/u2 && python3 -m http.server 18080 &)
 BASELINES_DIR=$(mktemp -d) PORT=8013 ./scripts/start_app.sh &
 # capture baseline from your served copy once, then swap the poisoned PNG in its place, then:
 curl -s -X POST localhost:8013/analyze -F url=http://127.0.0.1:18080/page.png
 ```
+(U1/U4-style one-liners assume the store where the site IS baselined —
+against an empty throwaway store /analyze returns the clean JSON error
+`No reference image available`, which is U6's non-baselined case.)
 Expect: `deterministic.changed=true`, `changed_bands` names the band, and a
 narration describing your banner. This works — measured: half-white page
 0.259, band-blank 0.662, 1.3% banner 0.969 (page-level, static band).
@@ -81,9 +87,15 @@ until calibration lands; trust the flag, read the narration.
 
 **U4 cost/behavior on unchanged pages.** Any baselined, unchanged site:
 response should carry NO VLM narration and finish in ~3–6 s (screenshot +
-pure-CPU diff). Confirm the run row: `SELECT backend_url, det_similarity,
-det_band_sims FROM run_history ORDER BY id DESC LIMIT 3;` — expect
-`NULL 1.0 [1.0]`. Unchanged monitoring costs zero model time.
+pure-CPU diff). Confirm the run row (pvellm has no `sqlite3` CLI — use
+python3):
+```bash
+python3 -c "import sqlite3; [print(r) for r in sqlite3.connect(
+  'baselines/runs.db').execute('SELECT id, backend_url, det_similarity, det_band_sims \
+FROM run_history ORDER BY id DESC LIMIT 3')]"
+```
+Expect `NULL 1.0 [1.0...]` (backend_url NULL = zero VLM calls; band vectors
+present per-run). Unchanged monitoring costs zero model time.
 
 **U5 one-command gate.** On pvellm: `./scripts/qa_gate.sh` (~30 s). Expect
 9 passed / 1 skipped / 5 xfailed, three positive controls, rc=0. Add
