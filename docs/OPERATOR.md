@@ -15,10 +15,12 @@ Prod currently runs a pre-v0.4 checkout (`75f1d4b`) — none of the
 deterministic-judge work is live until you do this step.
 ```bash
 cd /root/minicpm-webapp
-# stop the old app however you started it (uvicorn/terminal); if via systemd:
-sudo systemctl stop minicpm-webapp        # only if the unit exists
+# Prod :8000 is a BARE uvicorn process, not a systemd unit (QA-verified:
+# `systemctl list-unit-files | grep minicpm` returns nothing on pvellm today).
+# Find and stop it first — ss prints the pid:
+ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kill that pid
 git fetch origin && git checkout v0.4.3   # first tag certified end-to-end by its own gate
-./scripts/start_app.sh                    # DB migration runs automatically at startup (pinned test)
+nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
 curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
 ```
@@ -41,8 +43,19 @@ fact: more detail always costs tokens; measured 832 vs 223 on identical images.)
 The kit is shipped and pinned but **not installed** — installing is yours:
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/systemd/minicpm-monitor.{service,timer} ~/.config/systemd/user/
-cp deploy/systemd/minicpm-monitor-stale.{service,timer} ~/.config/systemd/user/
+# NOTE: the monitor kit ships on v0.5-dev only — it is NOT in the v0.4.3 tag
+# you just checked out, so pull the four unit files straight from that ref
+# (QA-verified 2026-10-16: `ls deploy/systemd/` in a v0.4.3 checkout does not
+# contain minicpm-monitor*).
+cd /root/minicpm-webapp && git fetch origin v0.5-dev   # prod clone tracks only main by default (QA-verified)
+for f in minicpm-monitor.service minicpm-monitor.timer \
+         minicpm-monitor-stale.service minicpm-monitor-stale.timer; do
+  git show FETCH_HEAD:deploy/systemd/$f > ~/.config/systemd/user/$f
+done                                                     # all four verified to materialize this way
+# ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
+# v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
+# Pull it into the same place the unit expects:
+git show FETCH_HEAD:monitorlib.py > /root/minicpm-webapp/monitorlib.py
 # EDIT MPW_DIR/MPW_BASE in the two .service files if your paths differ
 loginctl enable-linger $USER
 systemctl --user daemon-reload
