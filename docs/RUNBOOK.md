@@ -182,6 +182,20 @@ screenshots are *not* persisted per run; sprawl wording corrected per QA
 audit). The "watched nothing for six days because nothing scheduled it"
 class is a worse product failure than any detector gap on this list, which
 is exactly why it's in the ledger and not in a footnote.
+  **Status update (v0.5-dev kit pinned, NOT yet installed or on the ship
+  tag):** closure kit exists — `monitorlib.py` + `tests/test_monitor.py`
+  (`fa4a8ff`; 11 pins independently re-run green on a second, pvellm-blind
+  host by QA): terminal-only heartbeat rows (a check that starts and dies is
+  NOT fresh — ran ≠ completed), a `stale` deadline query with `--require-ok`
+  (a watcher that runs but always fails reports `STALE BLIND`),
+  `Persistent=true` systemd timers preferred over crontab (plain cron
+  *forgets* missed windows across reboots — it does not queue), and an
+  evidence-safe `prune`: dry-run by default, deletes **only** plain-OK
+  non-control rows, so `CHANGED`/`SITE_UPDATED`/`CHECK_FAILED` rows cited by
+  id in feedback lines and this ledger can never be pruned out from under a
+  citation. W11 stays open until the units are installed (@user's hands) and
+  the stale check itself has an owner — the W graduates when absence has a
+  watchdog, not when the code exists.
 
 ## 4. Where to look at everything
 ```bash

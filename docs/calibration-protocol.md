@@ -28,6 +28,15 @@ recalibration, not an adjustment.
   arriving through training data instead of the threshold.
 - Per baseline: **N ≥ 5** captures+diffs of live vs baseline,
   `run_history.kind = 'control'`.
+- **Small-N statistic disclosure:** our p95 is nearest-rank (`rank =
+  ceil(0.95·N)`, no interpolation), so **for any N ≤ 19 the p95 IS the worst
+  observed capture** (rank saturates to N until N=20). A "widened" tolerance
+  born at small N literally means *worst lucky capture − margin* — one
+  unlucky capture (mid-animation frame) loosens the band for everyone.
+  `calibrate.py` now stamps `statistic: nearest-rank-p95(N=…)` with a
+  `DEGENERATE` marker per band while the statistic coincides with the max
+  (artifact-borne per Sammy; stamp retires itself at larger N); profiles
+  whose widened bands still carry the stamp must not graduate.
 - **Diurnal coverage (Sammy 3):** initial controls spread across ≥ 24 h
   (≈ 0/6/12/18/24 h) — five runs in five minutes never see the hourly carousel
   rotate, the day/night theme, or the ticker close. Profiles built without
