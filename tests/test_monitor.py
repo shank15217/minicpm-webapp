@@ -104,3 +104,53 @@ def test_stale_subcommand_never_ran_is_stale(tmp_path):
     db = str(tmp_path / "runs.db")
     rc = M.main(["stale", "--db", db])
     assert rc == 1                                    # no rows ever: scheduler dead
+
+
+def test_prune_legacy_schema_without_kind_column(tmp_path, capsys):
+    """pvellm prod runs v0.2.1: run_history has NO `kind` column. Prune must
+    degrade (keep-everything-citable semantics), not OperationalError."""
+    db = str(tmp_path / "legacy.db")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE run_history (id INTEGER PRIMARY KEY, url TEXT, ts TEXT,"
+                " status TEXT)")                      # exactly the legacy shape
+    con.executemany("INSERT INTO run_history (url, ts, status) VALUES (?,?,?)",
+                    [("plain_old", ts(days=90), "OK"), ("plain_new", ts(days=1), "OK")])
+    con.commit(); con.close()
+    assert M.main(["prune", "--db", db, "--keep-days", "30", "--apply"]) == 0
+    con = sqlite3.connect(db)
+    assert {r[0] for r in con.execute("SELECT url FROM run_history")} == {"plain_new"}
+    con.close()
+
+
+def test_prune_null_defacement_is_pruneable():
+    """NULL-safe SQL: `x IN (0, NULL)` is never true for NULL — a plain-OK row
+    with defacement_detected NULL (older writers) must still be pruneable."""
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        db = os.path.join(td, "runs.db")
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE run_history (id INTEGER PRIMARY KEY, url TEXT, ts TEXT,"
+                    " status TEXT, kind TEXT, verdict TEXT, error_code TEXT,"
+                    " defacement_detected INTEGER)")
+        con.execute("INSERT INTO run_history (url, ts, status, defacement_detected)"
+                    " VALUES ('null_old', ?, 'OK', NULL)", (ts(days=90),))
+        con.commit(); con.close()
+        assert M.main(["prune", "--db", db, "--keep-days", "30", "--apply"]) == 0
+        con = sqlite3.connect(db)
+        assert con.execute("SELECT COUNT(*) FROM run_history").fetchone()[0] == 0
+        con.close()
+
+
+def test_stale_require_ok_fails_on_blind_watcher(tmp_path, capsys):
+    """Deadline met but newest terminal row CHECK_FAILED: FRESH to a pure
+    deadline, STALE to --require-ok. This is the 400-storm case found on
+    real pvellm prod during the first live cycle (JSON-vs-Form mismatch):
+    a scheduler that runs and always fails is a BLIND watcher, not a dead
+    one, and absence-of-deadline alone cannot see it."""
+    db = str(tmp_path / "runs.db")
+    con = M.connect(db)
+    M.record_heartbeat(con, "s1", "CHECK_FAILED", 1.0, 1, "HTTP 400 storm")
+    con.close()
+    assert M.main(["stale", "--db", db, "--sites", "s1"]) == 0             # deadline ok
+    assert M.main(["stale", "--db", db, "--sites", "s1", "--require-ok"]) == 1
+    assert "BLIND" in capsys.readouterr().out

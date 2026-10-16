@@ -39,6 +39,7 @@ import sqlite3
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -77,7 +78,7 @@ def record_heartbeat(con, site: str, status: str, elapsed: float,
 
 def latest_heartbeat(con, site: str):
     row = con.execute("SELECT ts, status, elapsed_s, run_history_id FROM heartbeat"
-                      " WHERE site = ? ORDER BY ts DESC LIMIT 1", (site,)).fetchone()
+                      " WHERE site = ? ORDER BY ts DESC, rowid DESC LIMIT 1", (site,)).fetchone()
     return row
 
 
@@ -99,17 +100,20 @@ def analyze_one(base_url: str, site_key: str, url: str, timeout: int):
     """POST /analyze for one site. Returns (status, detail, run_history_id_hint).
     run_history_id is read back from the store after completion (single-writer
     assumption documented; multi-writer deployments must query by ts window)."""
+    # /analyze is Form()-based on BOTH v0.2.1 and v0.4.x (FastAPI Form params)
+    # — a JSON body is parsed as no-url and 400s with "Provide an image
+    # and/or a URL". Form-encode, same as the runbook's curl -F.
+    body = urllib.parse.urlencode({"url": url}).encode()
     req = urllib.request.Request(
-        base_url.rstrip("/") + "/analyze",
-        data=json.dumps({"url": url, "site_id": site_key}).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+        base_url.rstrip("/") + "/analyze", data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         return "HTTP_ERROR", f"HTTP {e.code} on /analyze", None
     except Exception as e:                      # noqa: BLE001 — transport is the point
-        return "TRANSPORT_ERROR", f"{type(e).__name__}: {e}", None
+        return "TRANSPORT_ERROR", f"{type(e).__name__}: {e} target={base_url}", None
     st = body.get("status")
     if st == "OK":
         return "OK", f"sim={body.get('similarity')}", body.get("run_id")
@@ -147,9 +151,10 @@ def cmd_stale(args) -> int:
         row = latest_heartbeat(con, s)
         stale = is_stale(row[0] if row else None, now, args.cadence, args.grace)
         status = row[1] if row else "NEVER"
-        print(f"{s} {'STALE' if stale else 'FRESH'} last={row[0] if row else 'never'}"
-              f" last_status={status}")
-        rc = rc or stale
+        blind = args.require_ok and status != "OK"   # ran-but-always-fails == blind watcher
+        print(f"{s} {'STALE' if (stale or blind) else 'FRESH'} last={row[0] if row else 'never'}"
+              f" last_status={status}" + (" BLIND(last!=OK)" if blind else ""))
+        rc = rc or stale or blind
     con.close()
     return rc
 
@@ -160,11 +165,20 @@ def cmd_prune(args) -> int:
     cutoff = utcnow().timestamp() - args.keep_days * 86400
     cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat(timespec="seconds")
     con = connect(args.db)
-    sel = ("DELETE FROM run_history WHERE ts < ?"
-           " AND COALESCE(kind,'check') != 'control'"
-           " AND status = 'OK'"
-           " AND defacement_detected IN (0, NULL)"
-           " AND verdict IS NULL AND error_code IS NULL")
+    # Column-driven predicates: legacy (v0.2.1) stores lack kind/verdict/
+    # error_code/defacement_detected entirely — degrade to what the schema
+    # CAN attest, never OperationalError on an older store.
+    cols = {r[1] for r in con.execute("PRAGMA table_info(run_history)")}
+    preds = ["ts < ?", "status = 'OK'"]
+    if "kind" in cols:
+        preds.append("COALESCE(kind,'check') != 'control'")
+    if "defacement_detected" in cols:
+        # NULL trap: `x IN (0, NULL)` is NEVER true for NULL — explicit OR.
+        preds.append("(defacement_detected = 0 OR defacement_detected IS NULL)")
+    for ev in ("verdict", "error_code"):
+        if ev in cols:
+            preds.append(f"{ev} IS NULL")
+    sel = "DELETE FROM run_history WHERE " + " AND ".join(preds)
     n = con.execute(sel.replace("DELETE FROM", "SELECT COUNT(*) FROM"), (cutoff_iso,)).fetchone()[0]
     kept = con.execute("SELECT COUNT(*) FROM run_history").fetchone()[0]
     if args.apply:
@@ -191,6 +205,9 @@ def main(argv=None) -> int:
     s.add_argument("--cadence", type=int, default=360)
     s.add_argument("--grace", type=int, default=90)
     s.add_argument("--sites", default="")
+    s.add_argument("--require-ok", action="store_true",
+                   help="also fail when the newest terminal row per site is not OK "
+                        "(deadline met but watcher is blind)")
     s.set_defaults(fn=cmd_stale)
     p = sub.add_parser("prune")
     p.add_argument("--db", required=True)

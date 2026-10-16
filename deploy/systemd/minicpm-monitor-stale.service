@@ -14,4 +14,4 @@ Description=minicpm-webapp staleness deadline check (fail = scheduler went silen
 Type=oneshot
 Environment=MPW_DIR=/root/minicpm-webapp
 Environment=MPW_PY=python3
-ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py stale --db "$MPW_DIR/baselines/runs.db" --cadence 60 --grace 30'
+ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py stale --db "$MPW_DIR/baselines/runs.db" --cadence 60 --grace 30 --require-ok'
