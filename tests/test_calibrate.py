@@ -271,3 +271,61 @@ def test_statistic_no_degeneracy_stamp_when_p95_not_max():
     b0 = prof["bands"][0]
     assert b0["raw_p95"] != max(sims)          # nearest-rank at N=20 is NOT the max
     assert "DEGENERATE" not in b0["statistic"]
+
+
+# --- trigger provenance + two-axis graduation (count-as-coverage rule) -----
+
+def test_trigger_of_reconstructs_and_defaults_conservatively():
+    assert C.trigger_of({"trigger": "auto"}) == "auto"
+    assert C.trigger_of({"trigger": "manual"}) == "manual"
+    assert C.trigger_of({"window": "autoT00"}) == "auto"          # reconstructed
+    assert C.trigger_of({"window": "manual-integration"}) == "manual"
+    assert C.trigger_of({"window": "t0"}) == "manual"
+    assert C.trigger_of({"window": "renamed_thing"}) == "manual"  # unknown EXCLUDES from auto
+    assert C.trigger_of({}) == "manual"                            # no info: conservative
+    # explicit stamp beats window reconstruction
+    assert C.trigger_of({"trigger": "manual", "window": "autoT99"}) == "manual"
+
+
+def _evening_cluster(key):
+    # 5 runs, all evening (hour 18-22 -> single calendar day in helper ts)
+    return rows_for(key, [[0.999]] * 5, hours=[18, 19, 20, 21, 22])
+
+
+def test_graduation_blockers_name_axes_even_when_n_is_satisfied():
+    """N=5 clears the old single-axis predicate; the evening cluster must
+    still be blocked by windows+days, and NO ready-word may appear."""
+    prof = C.build_profile("cluster", _evening_cluster("cluster"),
+                           THRESHOLD, 0.005, 5, _attested())
+    b = prof["graduation_blockers"]
+    assert b["runs"] == "ok"                          # N is satisfied…
+    assert b["windows_covered"] != "ok"                # …and the artifact says anyway
+    assert b["days"] == "1/2"
+    assert prof["status"] == "provisional_until_diurnal"
+    assert prof["graduation_ready"] is False
+    import json as _j
+    assert "diurnal_verified_candidate" not in _j.dumps(prof)   # no ready-word in any vocab
+
+
+def test_graduation_candidate_only_when_all_axes_ok():
+    prof = C.build_profile("spread", rows_for("spread", [[0.999]] * 5,
+                                              hours=[0, 6, 12, 18, 23]),
+                           THRESHOLD, 0.005, 5, _attested())
+    assert all(v == "ok" for v in prof["graduation_blockers"].values())
+    assert prof["status"] == "diurnal_verified_candidate"
+    assert prof["graduation_ready"] is True
+
+
+def test_trigger_split_and_auto_only_quantile_ship():
+    """Manual evening rows must be visible AS manual, and auto-only p95 must
+    exist so the room can watch the two disagree when cluster bias is real."""
+    rows = rows_for("mix", [[0.999], [0.998], [0.990]], hours=[2, 8, 20])
+    rows[0]["trigger"] = "auto"
+    rows[1]["window"] = "autoT06"
+    rows[2]["trigger"] = "manual"
+    prof = C.build_profile("mix", rows, THRESHOLD, 0.005, 2, _attested())
+    assert prof["trigger_split"]["auto"] == 2 and prof["trigger_split"]["manual"] == 1
+    b0 = prof["bands"][0]
+    assert b0["auto_n"] == 2
+    assert b0["auto_p95"] == C.p95([0.999, 0.998])
+    assert b0["raw_p95"] == C.p95([0.999, 0.998, 0.990])

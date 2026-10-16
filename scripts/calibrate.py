@@ -79,6 +79,18 @@ def hour_of(ts: str) -> int:
         return -1
 
 
+def trigger_of(row: dict) -> str:
+    """Structured trigger with conservative fallback (Quinn's provenance
+    contract + Sammy's pin demand): explicit stamp wins; legacy rows are
+    reconstructed from window names; UNKNOWN window names default to
+    'manual' so a future renaming EXCLUDES rows from the trusted auto-only
+    quantile rather than smuggling them in."""
+    t = row.get("trigger")
+    if t in ("auto", "manual"):
+        return t
+    return "auto" if str(row.get("window", "")).startswith("auto") else "manual"
+
+
 def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
                   min_n: int, attest: dict | None) -> dict:
     n_bands = max(r.get("n_bands", 0) for r in rows)
@@ -90,6 +102,7 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
     # reporting 0.2 instead of 1.0.)
     runs_flagged = sum(1 for r in rows
                        if any(s < threshold for s in (r.get("band_sims") or [])))
+    auto_rows = [r for r in rows if trigger_of(r) == "auto"]
     for bi in range(n_bands):
         sims = [r["band_sims"][bi] for r in rows
                 if r.get("band_sims") and bi < len(r["band_sims"])]
@@ -119,11 +132,18 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
         stat = f"nearest-rank-p95(N={len(sims)})"
         if len(sims) <= 20 and bp95 == max(sims):
             stat += "==max_observed(DEGENERATE: tolerance anchored to worst capture)"
+        # auto-only quantile (Sammy): when the evening-cluster effect is
+        # real, all-rows and auto-only p95 visibly disagree; both ship.
+        auto_sims = [r["band_sims"][bi] for r in auto_rows
+                     if r.get("band_sims") and bi < len(r["band_sims"])]
         bands.append({"band": bi, "n": len(sims), "raw_min": round(bmin, 4),
-                      "raw_p95": round(bp95, 4), "noise_width": width,
+                      "raw_p95": round(bp95, 4),
+                      "auto_n": len(auto_sims),
+                      "auto_p95": (round(p95(auto_sims), 4) if auto_sims else None), "noise_width": width,
                       "dynamic": dynamic, "statistic": stat, **disp})
 
     n = len(rows)
+    days = sorted({r["ts"][:10] for r in rows if r.get("ts")})
     hours = sorted({hour_of(r["ts"]) for r in rows if hour_of(r["ts"]) >= 0})
     covered = [h for h in DIURNAL_WINDOW_HOURS if any(abs(h - x) <= 3 for x in hours)]
     k_frac = round(runs_flagged / n, 4) if n else None
@@ -133,14 +153,25 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
     k = K_PLACEHOLDER if (n < min_n or k_frac is None) else max(1, min(n_bands, math.ceil(n_bands * k_frac * 2) or 1))
 
     diverged_unattested = ever_diverged and not (attest and "attested" in str(attest.get("status", "")))
+    # Two-axis graduation (Sammy's sharpening, Quinn's gate shape): counts do
+    # not graduate alone — a p95 from an evening cluster estimates evening
+    # dynamics and reads as well-sampled while being systematically wrong
+    # for other hours. Every axis carries its label; the artifact names its
+    # own insufficiency instead of leaving the arithmetic to a tired reader.
+    attestation_ok = not diverged_unattested
+    blockers = {
+        "runs": "ok" if n >= min_n else f"{n}/{min_n}",
+        "windows_covered": ("ok" if len(covered) >= len(DIURNAL_WINDOW_HOURS)
+                            else f"{len(covered)}/{len(DIURNAL_WINDOW_HOURS)}"),
+        "days": "ok" if len(days) >= 2 else f"{len(days)}/2",
+        "attestation": "ok" if attestation_ok else "missing",
+    }
     if diverged_unattested:
         status = "rejected_unattested"
-    elif n < min_n:
-        status = "insufficient_n"
-    elif len(covered) >= len(DIURNAL_WINDOW_HOURS):
-        status = "diurnal_verified_candidate"   # graduation still needs the 30-day reruns + human
+    elif any(v != "ok" for v in blockers.values()):
+        status = "insufficient_n" if n < min_n else "provisional_until_diurnal"
     else:
-        status = "provisional_until_diurnal"
+        status = "diurnal_verified_candidate"   # graduation still needs the 30-day reruns + human
     if status in ("insufficient_n", "provisional_until_diurnal"):
         # A single-sample band must not carry a confident disposition word:
         # "widened" from N=1 reads like a decision and is a quantile of one.
@@ -160,8 +191,14 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
             "k_placeholder": K_PLACEHOLDER,
         },
         "control_n": n,
+        "trigger_split": {"auto": len(auto_rows), "manual": n - len(auto_rows),
+                          "note": "auto rows are schedule-only; manual rows inflate N "
+                                  "without adding diurnal spread (§2 count-as-coverage rule)"},
+        "calendar_days_seen": days,
         "windows_hours_seen": hours,
         "diurnal_windows_covered": covered,
+        "graduation_blockers": blockers,
+        "graduation_ready": status == "diurnal_verified_candidate",
         "k_derivation": {"fraction_runs_flagged": k_frac, "k_used": k,
                           "note": "det-channel fraction (§3); placeholder until N>=min_n"},
         "attestation": attest or {"status": "none"},
@@ -199,6 +236,8 @@ def main():
         with open(out, "w") as f:
             json.dump(prof, f, indent=2, sort_keys=True)   # sort_keys: deterministic bytes
         print(f"{key}: status={prof['status']} N={prof['control_n']} "
+              f"(auto={prof['trigger_split']['auto']}/manual={prof['trigger_split']['manual']}) "
+              f"blockers={ {k: v for k, v in prof['graduation_blockers'].items() if v != 'ok'} or 'none' } "
               f"bands=[{', '.join(b.get('state','?') for b in prof['bands'])}] "
               f"k={prof['k_derivation']['k_used']} -> {out}")
         if prof["status"] == "rejected_unattested":
