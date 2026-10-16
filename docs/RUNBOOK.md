@@ -93,6 +93,8 @@ python3):
 python3 -c "import sqlite3; [print(r) for r in sqlite3.connect(
   'baselines/runs.db').execute('SELECT id, backend_url, det_similarity, det_band_sims \
 FROM run_history ORDER BY id DESC LIMIT 3')]"
+# (working-clone path shown; production equivalent:
+#  /root/minicpm-webapp/baselines/runs.db)
 ```
 Expect `NULL 1.0 [1.0...]` (backend_url NULL = zero VLM calls; band vectors
 present per-run). Unchanged monitoring costs zero model time.
@@ -161,6 +163,26 @@ coverage + the one-time human answer @qaquinn asked (is fhlb hero rotation
 expected?) — until profiles graduate `diurnal_verified`, treat dynamic-band
 thresholds as raw.
 
+W10 **Single copy of the baseline, no backup, no second witness.**
+`baselines/*.png` + `index.json` exist exactly once on pvellm, unversioned
+and unbacked: disk loss resets every comparison, profile, and attestation to
+zero, and a *silently modified* baseline (bad deploy, manual edit) makes a
+defaced site compare green forever with nobody the wiser. Fix is cheap for
+the risk — baseline dir under git or nightly `restic`/`rsync` to another box
+plus a sha256 manifest checked at app start — but until it ships, treat
+baseline integrity as an assumption, not a property. *(Sammy's first-night
+objection, accepted into the ledger without argument.)*
+
+W11 **v0.4.3 monitors nothing by itself.** No scheduler, no alert path, no
+retention policy: "monitoring" means someone POSTs `/analyze` and reads JSON.
+Until you add your own cron (or the v0.5 scheduler exists), **nothing is
+being watched** — and `runs.db` rows accumulate per check with zero pruning,
+which at a real 6h cadence is the slow failure mode (rows only — live
+screenshots are *not* persisted per run; sprawl wording corrected per QA
+audit). The "watched nothing for six days because nothing scheduled it"
+class is a worse product failure than any detector gap on this list, which
+is exactly why it's in the ledger and not in a footnote.
+
 ## 4. Where to look at everything
 ```bash
 # pvellm has no sqlite3 CLI — python3 reads the PROD store (absolute path;
@@ -176,5 +198,5 @@ docs/calibration-protocol.md                   # the v0.5 rules the numbers abov
 
 ## 5. Feedback format that maps back fastest
 Per test U1–U6: PASS/FAIL + one line + (if FAIL) the command + the run_history
-row id. Plus anything W1–W9 that bit you in real use — especially: did a flag
+row id. Plus anything W1–W11 that bit you in real use — especially: did a flag
 you saw look like noise (W2) or a real catch? That data IS the calibration.
