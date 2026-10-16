@@ -37,6 +37,20 @@ recalibration, not an adjustment.
   `DEGENERATE` marker per band while the statistic coincides with the max
   (artifact-borne per Sammy; stamp retires itself at larger N); profiles
   whose widened bands still carry the stamp must not graduate.
+- **Axis-label rule (Sammy; fourth instance of the founding error class —
+  raw-min, quantile-of-one, count-as-coverage):** every count in an artifact
+  that reads as evidence must carry its axis labels, or the artifact names
+  the missing axis for itself. Concretely: graduation is three-axis —
+  `runs ≥ 5` AND `distinct window-hours ≥ 4` AND `calendar days ≥ 2` — and
+  while any axis is short the profile emits `graduation_blockers` with
+  labeled values (`windows_covered: "2/4"`) and no ready-word may appear
+  anywhere in the artifact (pinned by absence-assert, not by convention).
+  Manual runs never silently weight diurnal stats: rows carry a structured
+  `trigger: auto|manual`, profiles publish `auto_n`/`auto_p95` beside the
+  all-rows quantiles so cluster bias is *visible disagreement*, and unknown
+  window names reconstruct to `manual` (conservative: renaming excludes,
+  never smuggles). A count without its axes is not evidence; it is the
+  quantile-of-one wearing a bigger coat.
 - **Diurnal coverage (Sammy 3):** initial controls spread across ≥ 24 h
   (≈ 0/6/12/18/24 h) — five runs in five minutes never see the hourly carousel
   rotate, the day/night theme, or the ticker close. Profiles built without
