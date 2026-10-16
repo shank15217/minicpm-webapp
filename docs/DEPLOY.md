@@ -202,6 +202,7 @@ clauses, each born from a real failure:
 |---|---|---|
 | 1 | `flock` on a lockfile | concurrent orphaned runs contended WAL/baseline locks — the prime suspect for the 240s "hang" |
 | 2 | healthy + dead-backend instances, bounded health-poll, log dump on deadline | never wait on an instance that never came up |
+| 2b | external deps (llama towers = backends + S2 SSRF target) probed at startup; refuse to run with the remedy printed if absent | on a host without `:8080`, S2/S2b passed vacuously and health tests ConnectErrored mid-suite — an unmet host precondition is a startup error, not a test result |
 | 3 | whole gate under `timeout 300`, per-test `--timeout=45` | a gate that can hang is not a gate |
 | 4 | all suite env vars exported in one place | half the red gates were harness-assembly errors, not code |
 | 5 | `trap` teardown of ports/processes/temp stores on every path | leaked test ports poisoned the next run |

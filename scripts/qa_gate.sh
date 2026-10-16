@@ -9,6 +9,10 @@
 #     instance (pointed at closed ports) with split BASELINES_DIR stores;
 #     health-poll each with a bounded deadline; on timeout, dump instance
 #     logs and fail fast — never wait on an instance that never comes up.
+#  2b. External deps (llama towers = backends + S2 SSRF target) probed at
+#     STARTUP; unmet precondition = refuse to run with the remedy printed
+#     (cross-host false-green class, Quinn: no listener on :8080 made S2/S2b
+#     vacuous and two health tests ConnectError mid-suite).
 #  3. Suite via `uv run --extra dev --with pytest-timeout pytest --timeout=45`
 #     and the WHOLE gate under `timeout 300`: a hung gate goes red WITH
 #     OUTPUT; a gate that can hang is not a gate (Sammy).
@@ -37,6 +41,32 @@ cleanup() {
     exit $rc
 }
 trap cleanup EXIT
+
+# Clause 2b (Quinn's cross-host RED run): the suite's S2 SSRF target and the
+# healthy instance's narration backends are EXTERNAL deps (:8080/:8081
+# llama-server). With nothing listening there S2/S2b pass vacuously and two
+# health-tier tests ConnectError — clause 6 caught it, but only mid-suite.
+# An unmet host precondition is a startup error, not a test result: probe the
+# deps FIRST, fail loud with the exact remedy, run nothing.
+ssrf_target="${SSRF_TEST_URL:-http://127.0.0.1:8080/health}"
+_orig() { # scheme://host:port/path -> scheme://host:port  (a first cut used
+          # ${VAR%/*}, which strips ONE segment -> .../v1/chat/health -> 404
+          # on a HEALTHY tower: refusing a good host would be the fail-loud
+          # disease inside the instrument itself. Caught in review, fixed.)
+    local rest="${1#*://}"; printf '%s://%s' "${1%%://*}" "${rest%%/*}"
+}
+for dep in "$(_orig "$LLAMA_16X")" "$(_orig "$LLAMA_4X")"; do
+    if ! curl -sf -m 3 "${dep}/health" >/dev/null; then
+        echo "FATAL: no llama-server at ${dep} (probed ${dep}/health)."
+        echo "       qa_gate requires BOTH towers: they are the healthy-instance"
+        echo "       backends AND the S2 SSRF target (${ssrf_target}). A gate that"
+        echo "       runs without them re-measures nothing — start them with"
+        echo "       ./scripts/start_llama_servers.sh (or export LLAMA_16X/LLAMA_4X)"
+        echo "       and re-run. Refusing to start the suite."
+        exit 1
+    fi
+done
+echo "== deps OK: llama towers answering at $(_orig "$LLAMA_16X") / $(_orig "$LLAMA_4X")"
 
 wait_health() { # port deadline_s label
     for _ in $(seq 1 "$2"); do
