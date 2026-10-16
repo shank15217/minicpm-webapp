@@ -100,11 +100,48 @@ def page_diff(baseline_bytes: bytes, live_bytes: bytes,
             changed_bands.append(f"{y0}-{y1}")
     page_sim = min(band_sims) if band_sims else 1.0
     changed = bool(changed_bands) or abs(a.size[1] - b.size[1]) > 2 * BAND_OVERLAP
+    # (b)-lite aligned rematch (calibration-protocol 6.5, Paul's ruling:
+    # (a)+(b)-lite): for FLAGGED bands only, re-compare the live band window
+    # against baseline windows at +/- one band offset and keep the BEST sim.
+    # Sub-flag content insertion shifts every downstream band; without this,
+    # changed_bands over-reports "everything below the insertion" and the
+    # narrator crops point at innocent pixels.
+    # HARD GUARDRAIL (QA, non-negotiable): aligned sims NEVER feed `changed`
+    # or `page_sim` above — the alert consumes the RAW page-min only.
+    # "Keep the best sim" is a maximization direction and every laundering
+    # story in this project started with maximizing agreement; aligned sims
+    # are admitted solely for localization, narrator-crop selection, and
+    # tolerance distributions (calibration 2 stores both channels).
+    aligned_band_sims = list(band_sims)
+    align_offsets = [0] * len(band_sims)
+    band_list = bands(h)
+    # Search radius per Sammy's spec: sub-flag drift is <= 2*BAND_OVERLAP px,
+    # so scan that range on a 32px grid. (A first cut used +/-BAND_H offsets;
+    # the synthetic-insertion test showed a 100px shift is aligned by NO whole
+    # band offset — the grid has to match the actual drift scale.)
+    ALIGN_SEARCH = [o for o in range(-2 * BAND_OVERLAP, 2 * BAND_OVERLAP + 1, 32) if o]
+    for i, (y0, y1) in enumerate(band_list):
+        if band_sims[i] >= threshold and abs(a.size[1] - b.size[1]) <= 2 * BAND_OVERLAP:
+            continue  # unflagged: zero extra work by design
+        bb = b.crop((0, y0, b.size[0], y1))
+        best, best_off = band_sims[i], 0
+        for off in ALIGN_SEARCH:
+            ay0, ay1 = max(0, y0 + off), min(a.size[1], y1 + off)
+            if ay1 - ay0 < (y1 - y0) // 2:
+                continue  # window mostly off-page: not a valid rematch
+            ba = a.crop((0, ay0, a.size[0], ay1))
+            s = min(hamming_sim(dhash(ba), dhash(bb)), mae_sim(ba, bb))
+            if s > best:
+                best, best_off = round(s, 4), off
+        aligned_band_sims[i] = round(best, 4)
+        align_offsets[i] = best_off
     return {
         "page_sim": round(page_sim, 4),
         "changed": changed,
         "threshold": threshold,
         "band_sims": band_sims,
+        "aligned_band_sims": aligned_band_sims,
+        "band_align_offsets": align_offsets,
         "changed_bands": changed_bands,
         "n_bands": len(band_sims),
         "height_delta_px": b.size[1] - a.size[1],

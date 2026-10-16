@@ -15,12 +15,18 @@
 #      -> must exit 0 (xfail_strict=true makes any XPASS a failure).
 #   2. The defects whose marks must be REMOVED by the tag must have no
 #      xfail mark left in tests/ (their removal commit is the milestone signal).
+#   SKIP_TESTS=1 skips [1/2] — for invocation from qa_gate.sh (clause 7),
+#   which has ALREADY run the identical suite this run; re-running it here
+#   would also double-count the redirector hit-log. Check-then-tag order is
+#   enforced by construction (v0.4.2 self-report: tag was cut before the
+#   check ran — never rely on operator sequencing).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PATH="$HOME/.local/bin:$PATH"
 
 TAG="${TAG:?set TAG=vX.Y.Z}"
 BASE_URL="${BASE_URL:?set BASE_URL to the throwaway instance}"
+SKIP_TESTS="${SKIP_TESTS:-0}"
 
 # Defect marks that MUST still be present (open) / absent (closed) per tag.
 declare -A MUST_CLOSED=(
@@ -33,8 +39,12 @@ declare -A MUST_CLOSED=(
 # Tags before the first fix release have no closure requirements yet.
 CLOSE_LIST="${MUST_CLOSED[$TAG]:-}"
 
-echo "== [1/2] full suite (all tiers, WRITE_PROBES=1, xfail_strict) against $BASE_URL"
-WRITE_PROBES=1 uv run --extra dev pytest -rxX tests/ -v
+if [ "$SKIP_TESTS" = "1" ]; then
+    echo "== [1/2] SKIPPED per SKIP_TESTS=1 (suite already ran in this gate run — clause 7)"
+else
+    echo "== [1/2] full suite (all tiers, WRITE_PROBES=1, xfail_strict) against $BASE_URL"
+    WRITE_PROBES=1 uv run --extra dev pytest -rxX tests/ -v
+fi
 
 echo "== [2/2] milestone xfail-mark removal check for $TAG"
 for sid in $CLOSE_LIST; do

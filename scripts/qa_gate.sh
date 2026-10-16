@@ -164,5 +164,24 @@ if [ "$pos_fail" -ne 0 ]; then
     echo "== gate FAILED: positive-control assertion(s) above — a fault test passed vacuously"
     exit 1
 fi
+
+# Clause 7: check-then-tag order enforced by construction. If the caller
+# declares a candidate release tag, the gate ENDS with that tag's
+# tag_check ritual (mark-removal checks; test tier skipped — this gate run
+# already executed it, and re-running would double-count clause 6a's
+# hit-log). v0.4.2 lesson: the tag was cut before tag_check ran because
+# nothing made the order mechanical. Green tag_check output IS the last
+# thing a release sees before `git tag`.
+if [ -n "${CANDIDATE_TAG:-}" ]; then
+    if [ "$suite_rc" -ne 0 ]; then
+        echo "== clause 7: SKIPPED tag_check (suite rc=$suite_rc — no ritual over a red suite)"
+    else
+        echo "== clause 7: running tag_check ritual for candidate $CANDIDATE_TAG"
+        SKIP_TESTS=1 TAG="$CANDIDATE_TAG" BASE_URL="$BASE_URL" bash scripts/tag_check.sh \
+            || { echo "== gate FAILED: tag_check($CANDIDATE_TAG) — do NOT cut this tag"; exit 1; }
+    fi
+else
+    echo "== clause 7: CANDIDATE_TAG unset — tag ritual not run (set CANDIDATE_TAG=vX.Y.Z when gating a release)"
+fi
 echo "== gate rc=$suite_rc (suite + all clause-6 positive controls green)"
 exit $suite_rc

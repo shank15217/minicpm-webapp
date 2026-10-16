@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS run_history (
     kind              TEXT DEFAULT 'check',    -- check | control (calibration identical-input runs)
     det_similarity    REAL,                    -- v0.4: deterministic page_sim (THE verdict)
     det_changed_bands TEXT,                    -- JSON list of "y0-y1" windows below threshold
+    det_band_sims     TEXT,                    -- v0.5: RAW per-band sim vector (alert channel)
+    det_aligned_band_sims TEXT,                -- v0.5: (b)-lite aligned vector (localization/tolerance only)
     raw_output        TEXT,                    -- full model text, for audit
     page_text_sha256  TEXT,                    -- what text context the model saw
     elapsed_s         REAL
@@ -171,7 +173,13 @@ def init_run_db() -> None:
         existing = {r[1] for r in conn.execute("PRAGMA table_info(run_history)")}
         for col, typ in (("kind", "TEXT DEFAULT 'check'"),
                          ("det_similarity", "REAL"),
-                         ("det_changed_bands", "TEXT")):
+                         ("det_changed_bands", "TEXT"),
+                         # v0.5 calibration protocol §6: per-band vectors so
+                         # tolerance profiles are a query, not a spreadsheet.
+                         # RAW vector feeds alerts; ALIGNED vector is
+                         # localization/tolerance only (guardrail §6.5).
+                         ("det_band_sims", "TEXT"),
+                         ("det_aligned_band_sims", "TEXT")):
             if col not in existing:
                 conn.execute(f"ALTER TABLE run_history ADD COLUMN {col} {typ}")
 
@@ -264,7 +272,10 @@ def narration_crops(ref_bytes: bytes, live_bytes: bytes, det: dict,
     ~10% of the token cost per crop.
     """
     bands = det.get("changed_bands") or []
-    sims = det.get("band_sims") or []
+    # Crop ORDER is a localization decision, so it may use the (b)-lite
+    # aligned vector (calibration §6.5 guardrail: aligned sims select crops
+    # and tolerances, never innocence — the flag list itself is raw-only).
+    sims = det.get("aligned_band_sims") or det.get("band_sims") or []
     ordered = sorted(range(len(bands)), key=lambda i: sims[i] if i < len(sims) else 0.0)
     try:
         a = Image.open(io.BytesIO(ref_bytes))
@@ -611,7 +622,30 @@ async def analyze(
         # full f16 page is an enormous prompt and pairwise judgment is
         # corrupted anyway.
         llm = None
-        if det is not None and not det.get("error") and not det["changed"]:
+        # §6.5 ruling (Paul, v0.5): (a)+(b)-lite. (a) here — when EVERY band
+        # flags AND the page height moved more than the drift tolerance, the
+        # honest statement is "the site was updated", not "N regions
+        # defaced": a legit content insertion misaligns every downstream
+        # band, so localization is meaningless and narrating 6 innocent-ish
+        # crops is token waste with a false-defacement headline. Route to a
+        # distinct site-updated flow; the alert still fires (changed=True).
+        site_updated = (
+            det is not None and not det.get("error") and det["changed"]
+            and det.get("n_bands", 0) > 0
+            and len(det.get("changed_bands") or []) >= det.get("n_bands", 0)
+            and abs(det.get("height_delta_px", 0)) > 2 * detdiff.BAND_OVERLAP)
+        if site_updated:
+            result["verdict"] = "site-updated"
+            result["verification"] = (
+                f"All {det.get('n_bands')} bands differ AND page height changed "
+                f"by {det.get('height_delta_px')}px: routed to site-updated "
+                f"review flow (calibration §6.5). Band localization is not "
+                f"meaningful under page-structure change; re-baseline after "
+                f"human review.")
+            result["verification_quality"] = (
+                "deterministic-band-sim, site-updated routing (v0.5 §6.5a; "
+                "VLM narration skipped — localization invalid under height shift)")
+        elif det is not None and not det.get("error") and not det["changed"]:
             result["verification"] = (
                 f"Deterministic band comparison: live page matches baseline "
                 f"across all {det.get('n_bands', '?')} bands "
@@ -715,6 +749,9 @@ async def analyze(
             raw_output=llm["content"] if llm else None,
             det_similarity=det["page_sim"] if det and not det.get("error") else None,
             det_changed_bands=json.dumps(det["changed_bands"]) if det and not det.get("error") else None,
+            det_band_sims=json.dumps(det["band_sims"]) if det and not det.get("error") else None,
+            det_aligned_band_sims=json.dumps(det.get("aligned_band_sims", [])) if det and not det.get("error") else None,
+            verdict="site-updated" if site_updated else None,
             page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
             elapsed_s=round(time.perf_counter() - start_time, 2),
         )
