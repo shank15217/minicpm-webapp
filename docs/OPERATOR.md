@@ -27,6 +27,23 @@ curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
 Ping-pong any surprise to the room with the test ID (U1) — Quinn health-gates
 + runs a verification round-trip on your word.
 
+**Rollback (if v0.4.3 health goes red):**
+```bash
+# kill the new app's pid (ss -tlnp | grep ':8000 '), then:
+git checkout 75f1d4b && nohup ./scripts/start_app.sh > app.log 2>&1 &
+```
+Verification status, stated honestly (QA probe on a copied store, prod
+untouched): **old code BOOTS against a migrated DB — verified** (health
+answers on a throwaway with all three new columns present; migration is
+additive `ALTER ADD COLUMN` and old INSERTs name columns explicitly, so
+extra columns can't break it). **Not yet verified: the old code's full
+analyze write-path** — the throwaway's baseline lookup didn't reproduce
+prod's working path (probe artifact, cause unpinned), and both towers are
+DOWN as of this writing, so no end-to-end old-code run was possible. Net:
+rollback is expected-safe, and the first time you use it will be the proof —
+expect `{"16x":"unreachable"...}` in health until the towers are back
+regardless of which version you're on.
+
 ### A2. Vision towers (only when you relaunch them — decision included)
 Corrected semantics (README's old text was inverted; fixed in `888286d`):
 **detail = f16 mmproj = :8080 (default), fast = -4x file = :8081.**
