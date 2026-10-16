@@ -1,0 +1,24 @@
+# W11 monitor — systemd timer path (PREFERRED over cron on systemd hosts).
+# Persistent=true is the whole point: a reboot across the window FIRES AT BOOT.
+# A plain user crontab without anacron doesn't queue missed windows — it
+# forgets them, which is one of the exact silent-absence killers W11 names.
+#
+# Install (on the deploy host, as the user running the app; @user's hands):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/minicpm-monitor.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now minicpm-monitor.timer
+#   # watcher-watcher (deadline alert; also fires at boot after missed windows):
+#   systemctl --user enable --now minicpm-monitor-stale.timer
+# Enable user lingering so timers run without a login session:  loginctl enable-linger $USER
+
+[Unit]
+Description=minicpm-webapp monitor: analyze every baselined site, write TERMINAL heartbeat
+
+[Service]
+Type=oneshot
+# EDIT these three to your deployment:
+Environment=MPW_BASE=http://127.0.0.1:8000
+Environment=MPW_DIR=/root/minicpm-webapp
+Environment=MPW_PY=python3
+ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py run --base-url "$MPW_BASE" --index "$MPW_DIR/baselines/index.json" --db "$MPW_DIR/baselines/runs.db"'

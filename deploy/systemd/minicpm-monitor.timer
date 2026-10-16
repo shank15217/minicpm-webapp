@@ -1,0 +1,10 @@
+[Unit]
+Description=minicpm-webapp monitor run (hourly, Persistent: missed windows fire at boot)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
