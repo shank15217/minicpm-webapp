@@ -46,6 +46,10 @@
       </div>
 
       <div class="checkbox-row">
+        <input type="checkbox" id="allow_insecure">
+        <label for="allow_insecure" style="margin:0; font-weight:normal;">Allow insecure capture (if TLS fails — expired/untrusted cert — retry ignoring cert errors and flag the result as unauthenticated)</label>
+      </div>
+      <div style="margin:6px 0;">
         <input type="checkbox" id="visual_verify" checked>
         <label for="visual_verify" style="margin:0; font-weight:normal;">Visual verification (screenshot the live page and compare images)</label>
       </div>
@@ -99,6 +103,7 @@
       formData.append('mode', mode);
       formData.append('visual_verify', visual ? 'true' : 'false');
       formData.append('capture_baseline', capture ? 'true' : 'false');
+      formData.append('allow_insecure', document.getElementById('allow_insecure').checked ? 'true' : 'false');
       if (url) formData.append('url', url);
       const prompt = document.getElementById('prompt').value;
       if (prompt) formData.append('prompt', prompt);
@@ -123,6 +128,8 @@
             // S4, ledger W5: narrators describe, they do not judge.)
             if (data.status) text += `\n--- Deterministic verdict ---\nstatus: ${data.status}\n`;
             if (data.error_code) text += `error_code: ${data.error_code}${data.detail ? ' — ' + data.detail : ''}\n`;
+            if (data.tls && !data.tls.verified) text += `TLS: ${data.tls.error} — captured with cert checks DISABLED; content unauthenticated\n`;
+            if (data.warning) text += `WARNING: ${data.warning}\n`;
             if (data.deterministic && !data.deterministic.error) {
               const d = data.deterministic;
               text += `page_sim: ${d.page_sim} (alert threshold ${d.threshold})\n`;

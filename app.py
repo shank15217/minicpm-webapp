@@ -440,7 +440,8 @@ async def fetch_page_text(url: str) -> str:
         resp.raise_for_status()
         text = resp.text
     except Exception as e:
-        raise CheckFailed("FETCH_FAILED", f"{url}: {type(e).__name__}: {e}")
+        raise CheckFailed(classify_capture_error(e, url),
+                          f"{url}: {type(e).__name__}: {e}")
     text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
@@ -448,10 +449,65 @@ async def fetch_page_text(url: str) -> str:
     return text[:2000]
 
 
-async def capture_screenshot(url: str) -> Optional[bytes]:
-    """Capture a full-page screenshot of the URL using Playwright (async). Returns PNG bytes or None."""
-    try:
-        from playwright.async_api import async_playwright
+# ---------------------------------------------------------------------------
+# Unreachable-site classification (@user 2026-10-17): "site inaccessible" is
+# not one error — cert expiry, DNS death, and a refused port are DIFFERENT
+# operational states, and conflating them with generic capture failure hides
+# exactly the standard errors an operator must recognize end to end.
+# Codes are stable API: run_history.error_code and the UI render them.
+
+_UNREACHABLE_PATTERNS = [
+    # (substrings ANY-lowercased-match, code) — order matters: most specific first
+    (("certificate has expired", "cert_date_invalid", "notafter"), "SSL_CERT_EXPIRED"),
+    (("common name invalid", "hostname mismatch", "cert_common_name_invalid",
+      "doesn't match", "mismatch"), "SSL_HOSTNAME_MISMATCH"),
+    (("self signed", "self-signed", "cert_authority_invalid", "unknown ca",
+      "unable to get local issuer"), "SSL_CERT_UNTRUSTED"),
+    (("ssl", "tls", "handshake", "sslv3", "alert"), "SSL_HANDSHAKE_FAILED"),
+    (("err_name_not_resolved", "getaddrinfo", "name or service not known",
+      "name resolution", "nodename nor servname"), "DNS_FAILURE"),
+    (("connection refused", "err_connection_refused"), "CONNECTION_REFUSED"),
+    (("connection reset", "err_connection_reset", "connection closed",
+      "err_connection_closed", "server disconnected"), "CONNECTION_RESET"),
+    (("timed out", "timed_out", "timeout", "err_timed_out"), "TIMEOUT"),
+    (("network is unreachable", "network_unreachable", "internet disconnected",
+      "internet_disconnected", "network changed", "network_changed",
+      "err_address_unreachable", "no route to host"), "NETWORK_UNREACHABLE"),
+]
+
+
+def classify_capture_error(exc: BaseException, url: str = "") -> str:
+    """Map any Playwright/httpx/ssl exception to a stable error code.
+    Never returns None — unknown failures get CAPTURE_FAILED, an honest
+    bucket, not a swallowed exception."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None:  # httpx.HTTPStatusError path
+        m = __import__("re").search(r"status code[\s:]+(\d{3})", text)
+        status = int(m.group(1)) if m else None
+    if status is not None and status >= 400:
+        return f"HTTP_{status}"
+    for subs, code in _UNREACHABLE_PATTERNS:
+        if any(k in text for k in subs):
+            return code
+    return "CAPTURE_FAILED"
+
+
+async def capture_screenshot(url: str, allow_insecure: bool = False):
+    """Full-page screenshot via Playwright. Returns (png_bytes, tls_info).
+
+    tls_info = {"verified": bool, "error": code|None}. A TLS failure is
+    REPORTED as SSL_* — never silently bypassed; with allow_insecure=True the
+    capture retries ignoring cert errors and flags tls_info.verified=False so
+    every downstream consumer sees the content arrived unauthenticated
+    (a strip-SSL attack must stay visible, @user's "ignore and go to the
+    site" served without gutting the signal). Any other failure raises
+    CheckFailed with a classified code — an unreachable site is an OPERATIONAL
+    finding, never a silent text-only degradation.
+    """
+    from playwright.async_api import async_playwright
+
+    async def _grab(ignore_https: bool) -> bytes:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -461,29 +517,40 @@ async def capture_screenshot(url: str) -> Optional[bytes]:
                     "--disable-dev-shm-usage",
                 ],
             )
-            context = await browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/131.0.0.0 Safari/537.36"
-                ),
-                locale="en-US",
-            )
-            # Reduce obvious automation signals
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
-            page = await context.new_page()
-            # load is more reliable than networkidle on busy / protected sites
-            await page.goto(url, wait_until="load", timeout=60000)
-            await page.wait_for_timeout(2500)
-            screenshot_bytes = await page.screenshot(full_page=True, type="png")
-            await browser.close()
-            return screenshot_bytes
+            try:
+                context = await browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    ignore_https_errors=ignore_https,
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                )
+                await context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                )
+                page = await context.new_page()
+                # load is more reliable than networkidle on busy / protected sites
+                await page.goto(url, wait_until="load", timeout=60000)
+                await page.wait_for_timeout(2500)
+                return await page.screenshot(full_page=True, type="png")
+            finally:
+                await browser.close()
+
+    try:
+        return await _grab(False), {"verified": True, "error": None}
     except Exception as e:
-        print(f"Screenshot failed for {url}: {e}")
-        return None
+        code = classify_capture_error(e, url)
+        if code.startswith("SSL_") and allow_insecure:
+            try:
+                return (await _grab(True),
+                        {"verified": False, "error": code})
+            except Exception as e2:
+                raise CheckFailed(classify_capture_error(e2, url),
+                                  f"{url}: {e2}")
+        raise CheckFailed(code, f"{url}: {e}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -504,13 +571,14 @@ async def analyze(
     mode: Optional[str] = Form("detail"),
     visual_verify: Optional[str] = Form("true"),
     capture_baseline: Optional[str] = Form("false"),
+    allow_insecure: Optional[str] = Form("false"),
 ):
     """
     Analyze an image and/or verify a URL.
     - capture_baseline=true + url: take live screenshot and store it as the healthy baseline for that URL.
     - Otherwise: compare live page against stored baseline (if any) or against an uploaded reference image.
     mode: "detail" (full-res tower) or "fast" (token-saving tower);
-          legacy aliases "16x"->detail, "4x"->fast still accepted.
+          legacy aliases "16x"->fast, "4x"->detail (file truth, 2026-10-17).
     visual_verify: whether to capture a live screenshot for comparison.
     """
     mode = (mode or "detail").lower()
@@ -521,6 +589,7 @@ async def analyze(
 
     do_visual = visual_verify and visual_verify.lower() in ("true", "1", "yes", "on")
     do_capture = capture_baseline and capture_baseline.lower() in ("true", "1", "yes", "on")
+    do_insecure = allow_insecure and allow_insecure.lower() in ("true", "1", "yes", "on")
 
     result = {"mode": mode}
 
@@ -529,13 +598,18 @@ async def analyze(
         if not url or not url.strip():
             return JSONResponse({"error": "URL is required to capture a baseline"}, status_code=400)
         url = url.strip()
-        screenshot_bytes = await capture_screenshot(url)
-        if not screenshot_bytes:
-            # Seed pin (test_capture_path_dns_failure_is_500): keep 500 here;
-            # v0.2 adds a machine-readable reason code alongside it.
+        try:
+            screenshot_bytes, tls_info = await capture_screenshot(
+                url, allow_insecure=do_insecure)
+        except CheckFailed as e:
+            # Seed pin test_capture_path_dns_failure_is_500: keep 5xx; the
+            # opaque TARGET_UNREACHABLE is now the classified reason.
+            await _record(url=url, mode=mode, status="CHECK_FAILED",
+                          error_code=e.code,
+                          elapsed_s=round(time.perf_counter() - start_time, 2))
             return JSONResponse(
-                {"status": "CHECK_FAILED", "error_code": "TARGET_UNREACHABLE",
-                 "error": "Failed to capture screenshot for baseline"},
+                {"status": "CHECK_FAILED", "error_code": e.code,
+                 "error": str(e)},
                 status_code=500,
             )
 
@@ -651,8 +725,26 @@ async def analyze(
         screenshot_data_url = None
         screenshot_bytes = None
         det = None
+        tls_info = {"verified": True, "error": None}
         if do_visual:
-            screenshot_bytes = await capture_screenshot(url)
+            try:
+                screenshot_bytes, tls_info = await capture_screenshot(
+                    url, allow_insecure=do_insecure)
+            except CheckFailed as e:
+                # unreachable IS the finding: classified, recorded, 5xx.
+                await _record(url=url, mode=mode, status="CHECK_FAILED",
+                              error_code=e.code,
+                              elapsed_s=round(time.perf_counter() - start_time, 2))
+                return JSONResponse(
+                    {"status": "CHECK_FAILED", "error_code": e.code,
+                     "error": str(e), "url": url},
+                    status_code=502 if not e.code.startswith("HTTP_") else 422,
+                )
+            result["tls"] = tls_info
+            if not tls_info["verified"]:
+                result["warning"] = (f"TLS {tls_info['error']} — page captured "
+                                     "with cert checks DISABLED; content is "
+                                     "unauthenticated, treat as advisory")
             if screenshot_bytes:
                 screenshot_data_url = image_to_base64(screenshot_bytes)
                 result["screenshot_captured"] = True
