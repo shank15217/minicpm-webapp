@@ -11,6 +11,11 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 ## Part A — tonight, in order (≈15 min, your hands)
 
 ### A1. Put gate-certified code in service on :8000  (this is runbook test "U1")
+> **Re-measure before trusting this block (doc-vs-host drift rule):** the
+> state facts below were true at write time, not by contract. Re-check in
+> 5 seconds: `cd /root/minicpm-webapp && git rev-parse HEAD main origin/main`
+> · `ss -tlnp | grep ':8000 '` · `curl -s -m2 localhost:8080/health`. If any
+> fact disagrees, the doc is stale — say so in the room, don't improvise.
 Measured prod state (ss + git, tonight): checkout sits detached at `5a1f892`
 (the v0.4.3 tag) but **nothing serves :8000** — the pre-v0.4 process from
 earlier today is gone — and both towers (`:8080`/`:8081`) are UP on Q8_0
