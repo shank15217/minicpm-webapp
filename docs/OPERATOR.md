@@ -19,7 +19,7 @@ cd /root/minicpm-webapp
 # `systemctl list-unit-files | grep minicpm` returns nothing on pvellm today).
 # Find and stop it first — ss prints the pid:
 ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kill that pid
-git fetch origin && git checkout v0.4.3   # first tag certified end-to-end by its own gate
+git fetch origin && git checkout main   # why main, not the tag: v0.4.3..origin/main is 5 files, ALL docs + start_llama_servers.sh — zero app code (audited `git diff --stat`), and the starter fix (LLAMA_BIN default + fail-loud) landed AFTER the tag cut, so `checkout v0.4.3` would leave the BROKEN starter in place (receipt: merge-base --is-ancestor fails). Runtime is byte-identical to the gate-certified tag either way.
 nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
 curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
