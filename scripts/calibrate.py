@@ -34,7 +34,8 @@ Usage:
 Stdlib only; deterministic: same input file -> byte-identical profiles.
 """
 from __future__ import annotations
-import argparse, datetime, json, math, os, sys
+import argparse, datetime, hashlib, json, math, os, sys
+from pathlib import Path
 
 MEASURED_SMALLEST_DEFACEMENT_DELTA = 0.016   # 1.3% banner on rotating band, measured
 MEASURED_ROTATION_NOISE_SPAN = 0.14          # fhlb band-0 0.8281..0.9688, measured
@@ -117,7 +118,9 @@ def attestation_unregistered(attest: dict | None) -> bool:
 
 def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
                   min_n: int, attest: dict | None,
-                  baseline_captured_at: str | None = None) -> dict:
+                  baseline_captured_at: str | None = None,
+                  baseline_sha_index: str | None = None,
+                  cohort_source_missing: bool = False) -> dict:
     # §7 cohort-zero (Sammy fix #2): a baseline RE-CAPTURE resets calibration —
     # rows comparing against a superseded PNG measure the old cohort and must
     # not contribute to (or count toward N of) the current floor. Real trigger:
@@ -127,9 +130,24 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
     # nested entries). Without a boundary, rows stay in and the profile says
     # cohort: unattested instead of pretending.
     rows_before_cohort = 0
+    rows_sha_mismatch = 0
+    if baseline_sha_index:
+        # Stronger boundary than timestamps: a row whose baseline_sha is a
+        # DIFFERENT PNG than the index's current file measured a superseded
+        # capture, whatever its clock says. Rows without sha predate fix #1
+        # and fall through to the ts boundary.
+        keep = []
+        for r in rows:
+            sha = r.get("baseline_sha")
+            if sha and sha != baseline_sha_index:
+                rows_sha_mismatch += 1
+            else:
+                keep.append(r)
+        rows = keep
+        rows_before_cohort += rows_sha_mismatch
     if baseline_captured_at:
         current = [r for r in rows if str(r.get("ts", "")) >= baseline_captured_at]
-        rows_before_cohort = len(rows) - len(current)
+        rows_before_cohort += len(rows) - len(current)
         rows = current
     if not rows:
         return {"baseline_key": key, "status": "no_cohort_rows",
@@ -218,6 +236,14 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
         status = "insufficient_n" if n < min_n else "provisional_until_diurnal"
     else:
         status = "diurnal_verified_candidate"   # graduation still needs the 30-day reruns + human
+    # FAIL CLOSED (Quinn 2026-10-17): without a resolvable cohort source the
+    # ts filter never ran and pre-recapture rows are silently IN the cohort —
+    # the exact stale graduation §7 forbids. The safe behavior must not
+    # depend on remembering --index: mark the profile inert instead.
+    if cohort_source_missing and not baseline_captured_at:
+        blockers["cohort_source"] = "missing"
+        if status == "diurnal_verified_candidate":
+            status = "provisional_until_diurnal"
     if status in ("insufficient_n", "provisional_until_diurnal"):
         # A single-sample band must not carry a confident disposition word:
         # "widened" from N=1 reads like a decision and is a quantile of one.
@@ -279,17 +305,39 @@ def main():
     for r in rows:
         by_key.setdefault(r["baseline_key"], []).append(r)
 
+    # Cohort source resolution, fail-closed: --index > $MPW_BASELINE_INDEX >
+    # autodiscovery beside the app tree (<control>/../../minicpm-webapp/
+    # baselines/index.json). If none resolves, profiles are marked
+    # cohort_source_missing (never diurnal_verified_candidate), not silently
+    # cohort-blind. Quinn's repro: the documented command without --index
+    # resurrected 8a26 diurnal_verified_candidate N=10 from dead rows.
+    index_path = args.index or os.environ.get("MPW_BASELINE_INDEX")
+    if not index_path:
+        cand = (Path(args.control_jsonl).resolve().parent.parent
+                / "minicpm-webapp" / "baselines" / "index.json")
+        if cand.exists():
+            index_path = str(cand)
     index_entries = {}
-    if args.index:
-        index_entries = json.load(open(args.index)).get("baselines", {})
+    if index_path and os.path.exists(index_path):
+        index_entries = json.load(open(index_path)).get("baselines", {})
+        print(f"cohort source: {index_path} ({len(index_entries)} entries)")
+    else:
+        print("cohort source: NONE — profiles marked cohort_source_missing "
+              "(not_for_alerting); pass --index or set MPW_BASELINE_INDEX")
 
     os.makedirs(args.out_dir, exist_ok=True)
     exit_red = 0
     for key, krows in sorted(by_key.items()):
+        entry = index_entries.get(key, {})
+        sha_index = None
+        ep = entry.get("path")
+        if ep and os.path.exists(ep):
+            sha_index = hashlib.sha256(open(ep, "rb").read()).hexdigest()
         prof = build_profile(key, krows, args.threshold, args.margin,
                              args.min_n, load_attestation(args.attest_dir, key),
-                             baseline_captured_at=(
-                                 index_entries.get(key, {}).get("captured_at")))
+                             baseline_captured_at=entry.get("captured_at"),
+                             baseline_sha_index=sha_index,
+                             cohort_source_missing=not index_entries)
         out = os.path.join(args.out_dir, f"tolerance_{key}.json")
         with open(out, "w") as f:
             json.dump(prof, f, indent=2, sort_keys=True)   # sort_keys: deterministic bytes

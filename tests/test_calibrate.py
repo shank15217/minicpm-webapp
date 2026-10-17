@@ -404,3 +404,51 @@ def test_diverged_with_negation_status_stays_rejected():
                             attest={"status": "attested-rotation-provisional"})
     assert prof2["status"] != "rejected_unattested"
     assert prof2["graduation_blockers"]["attestation"] == "ok"
+
+
+# --- cohort source: fail CLOSED, never cohort-blind ------------------------
+# Quinn 2026-10-17: `--index` was opt-in; her verbatim run of the DOCUMENTED
+# command resurrected `8a26: diurnal_verified_candidate N=10 blockers=none`
+# from dead pre-recapture rows. Safe behavior may not depend on remembering
+# a flag.
+
+def _graduable_rows():
+    return rows_for("kg", [[0.999, 1.0]] * 8,
+                    hours=[0, 6, 12, 18, 0, 6, 12, 18])
+
+
+def _attest_ok():
+    return {"status": "attested"}
+
+
+def test_cohort_source_missing_caps_graduation_and_marks_inert():
+    prof = C.build_profile("kg", _graduable_rows(), THRESHOLD, 0.005,
+                           min_n=5, attest=_attest_ok(),
+                           cohort_source_missing=True)
+    assert prof["status"] == "provisional_until_diurnal"
+    assert prof["graduation_blockers"]["cohort_source"] == "missing"
+    assert prof["not_for_alerting"] is True
+    # contrast pair: same data, cohort source present -> graduation allowed.
+    prof2 = C.build_profile("kg", _graduable_rows(), THRESHOLD, 0.005,
+                            min_n=5, attest=_attest_ok(),
+                            baseline_captured_at="2020-01-01T00:00:00Z")
+    assert prof2["status"] == "diurnal_verified_candidate"
+
+
+def test_baseline_sha_mismatch_is_dropped_regardless_of_ts():
+    rows = _graduable_rows()
+    for r in rows[:5]:
+        r["baseline_sha"] = "d" * 64          # superseded PNG, recent ts
+    prof = C.build_profile("kg", rows, THRESHOLD, 0.005, min_n=5,
+                           attest=_attest_ok(),
+                           baseline_captured_at="2020-01-01T00:00:00Z",
+                           baseline_sha_index="c" * 64)
+    assert prof["control_n"] == 3
+    assert prof["rows_before_cohort"] >= 5
+    # rows whose sha MATCHES survive
+    rows2 = [dict(r, baseline_sha="c" * 64) for r in _graduable_rows()]
+    prof2 = C.build_profile("kg", rows2, THRESHOLD, 0.005, min_n=5,
+                            attest=_attest_ok(),
+                            baseline_captured_at="2020-01-01T00:00:00Z",
+                            baseline_sha_index="c" * 64)
+    assert prof2["control_n"] == 8

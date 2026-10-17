@@ -124,7 +124,7 @@ graduated ones.
 | Hourly site checks | systemd timer (A3) | automatic once installed |
 | "Is the watcher alive?" | systemd stale timer (A3) | or manual one-liner above |
 | Control batch (calibration evidence, 6h windows) | Quinn's cron on pvellm, durable paths | already installed; rows carry `trigger`+`detdiff_commit` |
-| Tolerance profiles | `python3 scripts/calibrate.py <control.jsonl> --attest-dir <dir> --out-dir <dir>` | rerun when you like; profiles print N, auto/manual split, and named `graduation_blockers` |
+| Tolerance profiles | `python3 scripts/calibrate.py <control.jsonl> --index /root/minicpm-webapp/baselines/index.json --attest-dir <dir> --out-dir <dir>` | rerun when you like; profiles print N, auto/manual split, and named `graduation_blockers`. `--index` supplies the §7 cohort boundary (also via `$MPW_BASELINE_INDEX` or autodiscovery); with NO resolvable source every profile is `cohort_source_missing` + `not_for_alerting`, never a silent cohort-blind graduation (Quinn's repro, 2026-10-17) |
 | History retention | `python3 monitorlib.py prune --db baselines/runs.db --keep-days 30` (dry-run; add `--apply`) | never deletes evidence rows (non-OK / verdicts / controls) |
 
 Graduation of a tolerance profile now requires ALL axes ok: N≥5 runs, 4
