@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # start_llama_servers.sh — start the two llama-server instances MiniCPM-V
 # vision backends the app expects:
-#   :8080 = 16x mmproj (full high-res, MORE visual tokens — measured 837 vs
-#           228 on a 640x480 image, Sammy 2026-10-15)
-#   :8081 = 4x mmproj  (lighter, fewer visual tokens)
+#   :8080 = mmproj-model-f16.gguf   (scale_factor=4 => 16x DOWNSAMPLE =>
+#           64 tok/tile  => the FAST/general tower; measured 489/612 prompt
+#           tokens vs 1851/2304 for -4x on the same image, 2026-10-17)
+#   :8081 = mmproj-model-f16-4x.gguf (scale_factor=2 => 4x downsample =>
+#           256 tok/tile => the DETAIL/OCR tower; ~4x prefill cost)
+#   NOTE: the Oct-15 header here claimed ":8080 = more visual tokens
+#   (837 vs 228)" — RETRACTED 2026-10-17, falsified by same-image re-measure
+#   on two hosts plus GGUF header diff (user). Orientation pin:
+#   tests/test_tower_orientation.py (MPW_TOWER_PROBE=1 runs it live).
 #
 # Configurable via env (defaults match the current pvellm deployment):
 #   LLAMA_BIN      path to llama-server binary
@@ -20,9 +26,10 @@ MODEL_DIR="${MODEL_DIR:-/AITOOLCHAIN/models/MiniCPM-V-4.7}"
 # Q8_0 per owner ruling (2026-10-15): best-quality quant of MiniCPM-V 4.7.
 # Set GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf to roll back.
 GGUF="${GGUF:-MiniCPM-V-4_7-1B-Q8_0.gguf}"
-# Tower naming note: MiniCPM-V ships two vision towers. The plain
-# mmproj-model-f16.gguf IS the 16x (full high-res) tower — there is no
-# separate "*16x*.gguf" file; "-4x" is the lighter 4x tower.
+# Tower naming note (corrected 2026-10-17): the suffix names the DOWNSAMPLE
+# factor, not the token count. f16 = 16x downsample = 64 tok/tile = CHEAPER;
+# "-4x" = 4x downsample = 256 tok/tile = MORE DETAIL. Variable names keep
+# the historical 16X/4X labels; port truth: :8080 fast, :8081 detail.
 MMPROJ_16X="${MMPROJ_16X:-mmproj-model-f16.gguf}"
 MMPROJ_4X="${MMPROJ_4X:-mmproj-model-f16-4x.gguf}"
 CTX="${CTX:-8192}"

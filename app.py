@@ -47,15 +47,20 @@ BASELINES_DIR = Path(os.getenv("BASELINES_DIR", "baselines"))
 BASELINES_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_PATH = BASELINES_DIR / "index.json"
 
-# Two possible backends. Override via env if needed.
-LLAMA_SERVER_16X = os.getenv(
-    "LLAMA_SERVER_16X",
-    "http://127.0.0.1:8080/v1/chat/completions"
-)
-LLAMA_SERVER_4X = os.getenv(
-    "LLAMA_SERVER_4X",
-    "http://127.0.0.1:8081/v1/chat/completions"
-)
+# Two vision towers. Orientation is MEASURED, not inferred from filenames —
+# the "-4x" file is the HIGH-detail one (scale_factor=2 => 4x downsample =>
+# 256 tokens/tile); plain f16 is scale_factor=4 (16x downsample => 64
+# tokens/tile). Receipts (same baseline PNG, temperature=0, both hosts):
+#   :8080 loads mmproj-model-f16.gguf   -> 489/612 prompt tokens  (fast/general)
+#   :8081 loads mmproj-model-f16-4x.gguf -> 1851/2304 prompt tokens (detail/OCR)
+# Re-measure: POST the same image to both /v1/chat/completions and compare
+# usage.prompt_tokens; tests/test_tower_orientation.py pins this live.
+LLAMA_SERVER_FAST = (os.getenv("LLAMA_SERVER_FAST")
+                     or os.getenv("LLAMA_SERVER_16X")
+                     or "http://127.0.0.1:8080/v1/chat/completions")
+LLAMA_SERVER_DETAIL = (os.getenv("LLAMA_SERVER_DETAIL")
+                       or os.getenv("LLAMA_SERVER_4X")
+                       or "http://127.0.0.1:8081/v1/chat/completions")
 # v0.4 deterministic verdict layer (detdiff): page_sim at or above this
 # threshold => "identical", VLM narration skipped entirely. Provisional
 # pending v0.5 control calibration (per-baseline, per-band profiles).
@@ -97,7 +102,12 @@ PROMPT_VERSION = hashlib.sha256(
 # (mmproj-model-f16-4x, ~228 tokens). `16x`/`4x` are DEPRECATED aliases
 # (owner ruling 2026-10-15; naming debate settled by the same token
 # measurements — see start_llama_servers.sh header).
-MODE_ALIASES = {"detail": "detail", "fast": "fast", "16x": "detail", "4x": "fast"}
+# Alias truth follows the FILE semantics (user-verified GGUF headers
+# 2026-10-17): "16x" mode = f16 = 64 tok/tile = fast; "4x" = -4x =
+# 256 tok/tile = detail. The old table had these crossed — the same
+# inversion as the original README, surviving one "fix".
+MODE_ALIASES = {"detail": "detail", "fast": "fast", "ocr": "detail",
+                "general": "fast", "16x": "fast", "4x": "detail"}
 
 
 class CheckFailed(Exception):
@@ -371,9 +381,11 @@ async def call_llama(messages: list, mode: str = "detail") -> dict:
     error prose as a result string. finish_reason == 'length' is a failure:
     truncated output must never be parsed downstream (Sammy rule (a)).
     """
-    # Resolve semantic mode (detail/fast) or legacy alias (16x/4x) to a
-    # backend. `detail`->16x server (f16, high-res); `fast`->4x server (coarse).
-    server_url = LLAMA_SERVER_4X if MODE_ALIASES.get(mode, "detail") == "fast" else LLAMA_SERVER_16X
+    # Resolve semantic mode to a backend by MEASURED orientation:
+    # fast/general -> f16 file (:8080, 64 tok/tile); detail/OCR -> -4x file
+    # (:8081, 256 tok/tile). Unknown modes fall back to fast (cheaper default).
+    server_url = (LLAMA_SERVER_FAST if MODE_ALIASES.get(mode, "fast") == "fast"
+                  else LLAMA_SERVER_DETAIL)
     payload = {
         "model": "minicpm-v",
         "messages": messages,
@@ -838,10 +850,11 @@ async def health():
         except Exception as e:
             return f"unreachable: {type(e).__name__}: {e}"
 
-    r16, r4x = await asyncio.gather(check(LLAMA_SERVER_16X), check(LLAMA_SERVER_4X))
+    r_fast, r_detail = await asyncio.gather(check(LLAMA_SERVER_FAST), check(LLAMA_SERVER_DETAIL))
     return {
-        "16x": r16,
-        "4x": r4x,
+        "fast": r_fast,        # f16 @ :8080 (legacy key "16x")
+        "detail": r_detail,    # -4x @ :8081 (legacy key "4x")
+        "16x": r_fast, "4x": r_detail,   # deprecated aliases, file-truth
         "playwright": "available" if _playwright_available() else "not installed (run: playwright install chromium)",
         "baselines_count": len(load_index().get("baselines", {})),
     }

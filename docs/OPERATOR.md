@@ -76,9 +76,13 @@ MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh
 # house default is Q8_0; to stay on Q4_K_M:
 GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh
 ```
-The script preserves towers already up and does the right mmproj/port pairing.
-Your call: Q4_K_M vs Q8_0 — both supported, one env var apart. (Physical
-fact: more detail always costs tokens; measured 832 vs 223 on identical images.)
+The script preserves towers already up and does the right mmproj/port pairing
+(:8080=f16 fast/general 64 tok/tile, :8081=-4x detail/OCR 256 tok/tile —
+measured same-image 489 vs 1851 prompt tokens, 2026-10-17; the older
+"832 vs 223 with f16 high-res" numbers in this doc were RETRACTED that day,
+falsified by re-measure + GGUF header diff; live pin:
+`MPW_TOWER_PROBE=1 python3 tests/test_tower_orientation.py`).
+Your call: Q4_K_M vs Q8_0 — both supported, one env var apart.
 
 ### A3. Turn on the watcher (closes W11 — the "monitored nothing for six days" gap)
 The kit is shipped and pinned but **not installed** — installing is yours:

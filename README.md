@@ -7,19 +7,28 @@ the MiniCPM-V-4.7-1B multimodal model to:
 - Perform website health / defacement checks by comparing a live page against a
   known-good baseline — the verdict is owned by a **deterministic pixel diff**
   (dHash64 + MAE per band); the VLM is a *narrator* only
-- Support both vision tower modes simultaneously: **`detail`** (full-resolution
-  `mmproj-model-f16.gguf`, ~833 prompt tokens per image) and **`fast`**
-  (`mmproj-model-f16-4x.gguf`, a 2×2 downsample, ~224 tokens)
+- Support both vision towers simultaneously: **`detail`** (OCR/grounding
+  `mmproj-model-f16-4x.gguf`, 4× downsample = 256 tok/tile, ~4× prefill cost)
+  and **`fast`** (general serving `mmproj-model-f16.gguf`, 16× downsample =
+  64 tok/tile) — orientation re-measured 2026-10-17, see the box below
 
 The web UI is optional; the entire workflow is available via a REST API.
 
-> **Tower naming, settled by measurement (2026-10-15):** the file named
-> `f16` is the high-detail tower and `-4x` is the token-saving one —
-> identical 640×480 image → 832 prompt tokens on the `f16` server vs 223 on
-> the `-4x` server. Legacy labels `16x`/`4x` still work as aliases
-> (`16x`→`detail`, `4x`→`fast`). Earlier revisions of this README called
-> "16x" the fast mode and paired the `-4x` tower with port 8080 — that was
-> inverted on both counts; corrected here and pinned by the token counts above.
+> **Tower naming, settled by GGUF headers + fresh measurement (2026-10-17):**
+> the file suffix names the **downsample factor**, not the token count.
+> `mmproj-model-f16.gguf` carries `projector.scale_factor=4` (16× downsample)
+> → **64 tok/tile → the FAST/general tower on :8080**; `mmproj-model-f16-4x.gguf`
+> carries `scale_factor=2` (4× downsample, 209 MB extra early-compression
+> merger *deleted*) → **256 tok/tile → the DETAIL/OCR tower on :8081**.
+> Measured same-image on prod: `:8080`=489 prompt tokens vs `:8081`=1851
+> (Paul) and 612 vs 2304 (Quinn) — the user's header diff predicts 640 vs
+> 2560 for a 9-slice image; ratios match. **RETRACTED:** the 2026-10-15
+> receipt "f16 = 832 vs -4x = 223, f16 is high-detail" — falsified by
+> today's re-measure; whatever produced it does not survive repro, and
+> `tests/test_tower_orientation.py` (live mode: `MPW_TOWER_PROBE=1`) now
+> pins the orientation so it can never ship inverted a third time.
+> Aliases follow file truth: `16x`→`fast`, `4x`→`detail`, plus
+> `general`→`fast`, `ocr`→`detail`.
 
 **Start here for testing and shipping:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
 (user test plan U1–U6 + published weaknesses ledger W1–W11). Deploy order and
@@ -49,11 +58,11 @@ tower/mode contract: [docs/DEPLOY.md](docs/DEPLOY.md). Calibration doctrine:
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐
 │  Client /   │────▶│  FastAPI (app.py)│────▶│ llama-server :8080  │
-│  UI / curl  │     │  port 8000       │     │  detail (f16 tower) │
+│  UI / curl  │     │  port 8000       │     │  fast (f16 tower)   │
 └─────────────┘     │                  │     └─────────────────────┘
                     │  detdiff (owns   │     ┌─────────────────────┐
                     │  the verdict) +  │────▶│ llama-server :8081  │
-                    │  Playwright      │     │  fast (-4x tower)   │
+                    │  Playwright      │     │  detail (-4x tower) │
                     └──────────────────┘     └─────────────────────┘
 ```
 
@@ -70,8 +79,8 @@ tower/mode contract: [docs/DEPLOY.md](docs/DEPLOY.md). Calibration doctrine:
 1. **llama.cpp** built from a checkout that includes MiniCPM-V 4.7 support (PR #29416 or later).
 2. Model files from Hugging Face (`openbmb/MiniCPM-V-4.7-1B-gguf`):
    - `MiniCPM-V-4_7-1B-Q8_0.gguf` (**default since v0.4**; `Q4_K_M` documented as rollback)
-   - `mmproj-model-f16.gguf` (the detail tower)
-   - `mmproj-model-f16-4x.gguf` (the fast tower)
+   - `mmproj-model-f16.gguf` (the FAST/general tower, 64 tok/tile, port 8080)
+   - `mmproj-model-f16-4x.gguf` (the DETAIL/OCR tower, 256 tok/tile, port 8081)
 
    ```bash
    huggingface-cli download openbmb/MiniCPM-V-4.7-1B-gguf MiniCPM-V-4_7-1B-Q8_0.gguf --local-dir models
