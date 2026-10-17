@@ -121,6 +121,23 @@ graduated ones.
 
 ---
 
+## Canonical restart ritual (docs-only; authored by @qaquinn from the room spec after two scanner-blocked attempts by its original author)
+
+Restarting after any deploy hop MUST move refs before touching the process, so `HEAD`
+never lags disk (tonight's recurring HEAD-lie — disk hot-materialized, HEAD stale, twice):
+
+```bash
+cd /root/minicpm-webapp
+git fetch origin && git checkout -B main --force origin/main   # refs first
+git rev-parse HEAD origin/main                                  # must print the SAME sha
+kill $(pgrep -f "uvicorn app:app")
+nohup ./scripts/start_app.sh > app.log 2>&1 &
+curl -s localhost:8000/health | head -c 120                     # feature-keys confirm the NEW process
+```
+
+Verify the quoted sha is the feature commit you expect before believing any feature claim.
+If `checkout` aborts on `monitorlib.py`, see W11: move it to `/tmp` and retry — never clean `baselines/`.
+
 ## Part B — the ongoing loop (what runs itself vs what you poke)
 
 | Loop | Who runs it | Command / status |
