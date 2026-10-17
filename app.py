@@ -310,6 +310,52 @@ def narration_crops(ref_bytes: bytes, live_bytes: bytes, det: dict,
 _http: Optional[httpx.AsyncClient] = None
 
 
+def cohort_noise_context(values: list[float], captured_at: str | None,
+                         as_of: str | None = None) -> dict:
+    """Render-time observed noise floor for the CURRENT baseline cohort
+    (Sammy's UI rule: a number without its axis is the quantile-of-one's
+    fourth hat; Quinn's constraint: the floor must carry its N and its age,
+    read at render time, never a literal prose number). Computed from the
+    app's own completed OK checks for this baseline since its current
+    capture; N=0 is reported as UNMEASURED — never rendered as a floor.
+    Pure function over the fetched values so it is pinnable without a db."""
+    if not values:
+        return {"status": "unmeasured", "n": 0, "captured_at": captured_at,
+                "note": "no completed OK checks against the current baseline "
+                        "capture yet — no floor exists to display"}
+    return {"status": "observed_provisional",
+            "sim_min": round(min(values), 4), "sim_max": round(max(values), 4),
+            "n": len(values), "captured_at": captured_at, "as_of": as_of,
+            "note": "observed range of past check similarities for THIS "
+                    "baseline capture; provisional until the tolerance "
+                    "profile graduates (docs/calibration-protocol.md §2)"}
+
+
+def _fetch_cohort_noise(key, captured_at) -> dict:
+    """Sync half of the render-time noise context: past OK checks for THIS
+    baseline cohort from run_history, fed to cohort_noise_context. Never
+    raises — a broken hint must not touch the verdict path."""
+    try:
+        conn = _db()
+        try:
+            if captured_at:
+                rows = conn.execute(
+                    "SELECT det_similarity, ts FROM run_history WHERE baseline_key=?"
+                    " AND status='OK' AND det_similarity IS NOT NULL AND ts >= ?"
+                    " ORDER BY ts DESC LIMIT 12", (key, captured_at)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT det_similarity, ts FROM run_history WHERE baseline_key=?"
+                    " AND status='OK' AND det_similarity IS NOT NULL"
+                    " ORDER BY ts DESC LIMIT 12", (key,)).fetchall()
+        finally:
+            conn.close()
+        return cohort_noise_context([r[0] for r in rows], captured_at,
+                                    as_of=rows[0][1] if rows else None)
+    except Exception as e:  # noqa: BLE001 — display hint, verdict path untouched
+        return {"status": "unavailable", "note": f"{type(e).__name__}: {e}"}
+
+
 async def _record(**fields) -> None:
     """Thread-pooled run-history insert: fsync happens off the event loop so
     a slow disk or WAL writer collision can never stall request handling
@@ -529,6 +575,7 @@ async def analyze(
     # Prefer stored baseline as reference if URL is given and baseline exists
     ref_bytes = None
     stored_description = None
+    stored = None
     using_baseline = False
     key_for_history = None
     if url and url.strip():
@@ -609,6 +656,13 @@ async def analyze(
                 except Exception as e:  # a broken diff must never fake healthy
                     det = {"error": f"{type(e).__name__}: {e}", "changed": True}
                 result["deterministic"] = det
+                if using_baseline:
+                    # Render-time cohort noise floor WITH its N and age
+                    # (UI misread rule; never a hardcoded prose number).
+                    result["noise_context"] = await anyio.to_thread.run_sync(
+                        functools.partial(
+                            _fetch_cohort_noise, key_for_history,
+                            stored.get("captured_at") if stored else None))
             else:
                 result["screenshot_captured"] = False
                 result["screenshot_error"] = "Failed to capture screenshot (Playwright issue or site blocked)"
