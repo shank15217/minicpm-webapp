@@ -373,6 +373,44 @@ async def _record(**fields) -> None:
     await anyio.to_thread.run_sync(functools.partial(record_run, **fields))
 
 
+def _last_good_check(url: str) -> bool:
+    """True if this URL ever completed an OK check (run_history is the record)."""
+    try:
+        conn = _db()
+        try:
+            return conn.execute(
+                "SELECT 1 FROM run_history WHERE url=? AND status='OK'"
+                " ORDER BY ts DESC LIMIT 1", (url,)).fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def _unreachable_finding(url: str, code: str, last_good=None):
+    """Doctrine (Sammy/Quinn 2026-10-17): for a defacement monitor, the
+    TRANSITION clean -> unreachable is itself a finding, not plumbing.
+    DNS death on a previously-clean site is takeover-shaped (domain expiry /
+    hijack replaces a legit site with a fake while everyone reads it as a
+    capture problem); SSL breakage is a named degraded state. Requires a
+    recorded last-good check, else it is just an unreachable new site."""
+    if last_good is None:
+        last_good = _last_good_check(url)
+    if not last_good:
+        return None
+    if code == "DNS_FAILURE":
+        return {"class": "site_unreachable_previously_clean",
+                "severity": "finding",
+                "advice": "domain stopped resolving for a site that checked "
+                          "clean — verify out-of-band (domain takeover shape)"}
+    if code.startswith("SSL_"):
+        return {"class": "site_tls_broken_previously_clean",
+                "severity": "degraded",
+                "advice": f"{code} on a previously-clean site — more often "
+                          "neglect than attack; fix the cert, keep watching"}
+    return None
+
+
 async def call_llama(messages: list, mode: str = "detail") -> dict:
     """Call the appropriate llama-server. Returns a dict with:
     content, finish_reason, fingerprint, model, backend_url.
@@ -616,6 +654,28 @@ async def analyze(
                 status_code=500,
             )
 
+        # GUARD (Sammy/Quinn 2026-10-17, CRITICAL): an unauthenticated capture
+        # must NEVER establish truth. A baseline captured with cert checks
+        # disabled inverts the monitor: every future verified capture of the
+        # genuine site diffs against a reference a path attacker authored, so
+        # the real site reads "changed" while a matching defacement reads OK —
+        # silent and permanent. allow_insecure exists to CONSUME broken sites,
+        # never to PIN them. Rejected before any VLM spend, index write, or
+        # run_events row.
+        if not tls_info["verified"]:
+            await _record(url=url, mode=mode, status="CHECK_FAILED",
+                          error_code="UNAUTHENTICATED_BASELINE_REJECTED",
+                          elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED",
+                 "error_code": "UNAUTHENTICATED_BASELINE_REJECTED",
+                 "error": f"baseline must be captured over verified TLS "
+                          f"(tls error: {tls_info['error']}); fix the cert "
+                          "or use a dated capture",
+                 "note": "no baseline written"},
+                status_code=409,
+            )
+
         # Generate description once and persist it with the baseline
         data_url = image_to_base64(screenshot_bytes)
         messages = [
@@ -718,10 +778,12 @@ async def analyze(
         except CheckFailed as e:
             await _record(url=url, mode=mode, status="CHECK_FAILED", error_code=e.code,
                        elapsed_s=round(time.perf_counter() - start_time, 2))
-            return JSONResponse(
-                {"status": "CHECK_FAILED", "error_code": e.code, "detail": str(e)},
-                status_code=502,
-            )
+            payload = {"status": "CHECK_FAILED", "error_code": e.code,
+                       "detail": str(e)}
+            finding = _unreachable_finding(url, e.code)
+            if finding:
+                payload["finding"] = finding
+            return JSONResponse(payload, status_code=502)
         result["url"] = url
         result["page_text_preview"] = page_text[:500] + "..." if len(page_text) > 500 else page_text
 
@@ -738,9 +800,13 @@ async def analyze(
                 await _record(url=url, mode=mode, status="CHECK_FAILED",
                               error_code=e.code,
                               elapsed_s=round(time.perf_counter() - start_time, 2))
+                payload = {"status": "CHECK_FAILED", "error_code": e.code,
+                           "error": str(e), "url": url}
+                finding = _unreachable_finding(url, e.code)
+                if finding:
+                    payload["finding"] = finding
                 return JSONResponse(
-                    {"status": "CHECK_FAILED", "error_code": e.code,
-                     "error": str(e), "url": url},
+                    payload,
                     status_code=502 if not e.code.startswith("HTTP_") else 422,
                 )
             result["tls"] = tls_info
