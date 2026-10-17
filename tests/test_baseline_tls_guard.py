@@ -42,8 +42,16 @@ def test_baseline_with_insecure_capture_409_and_no_write():
     import app as appmod
 
     writes = []
+    llm_calls = []
     orig = appmod.save_baseline
+    orig_llm = appmod.call_llama
+
+    async def _spy_llama(*a, **k):
+        llm_calls.append(a)
+        return await orig_llm(*a, **k)
+
     appmod.save_baseline = lambda *a, **k: (writes.append(a), "KEY")[1]
+    appmod.call_llama = _spy_llama
     try:
         c = TestClient(appmod.app)
         # control: the fixture IS reachable with cert checks off
@@ -56,5 +64,15 @@ def test_baseline_with_insecure_capture_409_and_no_write():
         assert r.status_code == 409, r.text
         assert r.json()["error_code"] == "UNAUTHENTICATED_BASELINE_REJECTED"
         assert writes == [], "save_baseline must not run for unauthenticated capture"
+        # Sammy variant: rejection must precede VLM spend — a guard that
+        # narrates first (correct 409, wasted tokens, MitM content already
+        # described in memory) fails this assertion, not just the write check.
+        assert llm_calls == [], "call_llama must never run for a rejected baseline"
+        # run_history contract for the post-flight (precise, so a CORRECT
+        # impl does not fail a wrong assertion): OK-row count for the URL is
+        # unchanged; exactly one NEW row appears with error_code
+        # UNAUTHENTICATED_BASELINE_REJECTED — recording the rejection is by
+        # design, "zero new rows" would be a wrong assertion.
     finally:
         appmod.save_baseline = orig
+        appmod.call_llama = orig_llm
