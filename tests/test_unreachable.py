@@ -37,6 +37,8 @@ CASES = [
     ("Page.goto: net::ERR_CONNECTION_TIMED_OUT at https://blackhole.example/", "TIMEOUT"),
     ("Timeout 60000ms exceeded.", "TIMEOUT"),
     ("Page.goto: net::ERR_INTERNET_DISCONNECTED at https://x.example/", "NETWORK_UNREACHABLE"),
+    ("Page.goto: net::ERR_UNSAFE_PORT at http://127.0.0.1:9/", "CLIENT_UNSAFE_PORT"),
+    ("connect ECONNREFUSED 127.0.0.1:12888", "CONNECTION_REFUSED"),
     # httpx / ssl paths
     ("ConnectError: [Errno -2] Name or service not known", "DNS_FAILURE"),
     ("ConnectError: [Errno 111] Connection refused", "CONNECTION_REFUSED"),
@@ -72,7 +74,7 @@ def test_unknown_failure_is_named_not_none():
 def test_codes_are_stable_api():
     allowed = {"SSL_CERT_EXPIRED", "SSL_HOSTNAME_MISMATCH", "SSL_CERT_UNTRUSTED",
                "SSL_HANDSHAKE_FAILED", "DNS_FAILURE", "CONNECTION_REFUSED",
-               "CONNECTION_RESET", "TIMEOUT", "NETWORK_UNREACHABLE",
+               "CONNECTION_RESET", "TIMEOUT", "NETWORK_UNREACHABLE", "CLIENT_UNSAFE_PORT",
                "CAPTURE_FAILED"}
     for _, code in CASES:
         assert code in allowed

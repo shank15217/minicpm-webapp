@@ -471,6 +471,7 @@ _UNREACHABLE_PATTERNS = [
     (("connection reset", "err_connection_reset", "connection closed",
       "err_connection_closed", "server disconnected", "econnreset",
       "epipe"), "CONNECTION_RESET"),
+    (("err_unsafe_port",), "CLIENT_UNSAFE_PORT"),  # Chromium denylist, not the site
     (("timed out", "timed_out", "timeout", "err_timed_out"), "TIMEOUT"),
     (("network is unreachable", "network_unreachable", "internet disconnected",
       "internet_disconnected", "network changed", "network_changed",
