@@ -127,6 +127,11 @@
               const d = data.deterministic;
               text += `page_sim: ${d.page_sim} (alert threshold ${d.threshold})\n`;
               if (d.changed_bands && d.changed_bands.length) text += `changed bands: ${d.changed_bands.join(', ')} of ${d.n_bands}\n`;
+              const nc = data.noise_context;
+              if (nc && nc.status === 'observed_provisional')
+                text += `expected noise for THIS baseline capture: ${nc.sim_min}\u2013${nc.sim_max} (N=${nc.n}, last check ${nc.as_of}; provisional \u2014 profile not graduated)\n`;
+              else if (nc && nc.status === 'unmeasured')
+                text += `expected-noise floor: UNMEASURED (N=0 for this baseline capture) \u2014 a sub-threshold sim here has no context yet; on fresh/personalizing sites expect it to read LOW with nothing wrong\n`;
             } else if (data.deterministic && data.deterministic.error) {
               text += `deterministic layer error: ${data.deterministic.error} (treated as changed)\n`;
             }
