@@ -661,7 +661,11 @@ async def analyze(
         # the real site reads "changed" while a matching defacement reads OK —
         # silent and permanent. allow_insecure exists to CONSUME broken sites,
         # never to PIN them. Rejected before any VLM spend, index write, or
-        # run_events row.
+        # index write. (There is no run_events table anywhere — an earlier
+        # claim that baseline_replaced events were being journaled there was
+        # RETRACTED 2026-10-17: never written, any branch. The audit trail
+        # that does exist is run_history: this rejection lands as one
+        # CHECK_FAILED row with its error_code.)
         if not tls_info["verified"]:
             await _record(url=url, mode=mode, status="CHECK_FAILED",
                           error_code="UNAUTHENTICATED_BASELINE_REJECTED",
