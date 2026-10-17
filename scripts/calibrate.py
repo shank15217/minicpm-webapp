@@ -92,7 +92,27 @@ def trigger_of(row: dict) -> str:
 
 
 def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
-                  min_n: int, attest: dict | None) -> dict:
+                  min_n: int, attest: dict | None,
+                  baseline_captured_at: str | None = None) -> dict:
+    # §7 cohort-zero (Sammy fix #2): a baseline RE-CAPTURE resets calibration —
+    # rows comparing against a superseded PNG measure the old cohort and must
+    # not contribute to (or count toward N of) the current floor. Real trigger:
+    # fhlb re-captured 21:20 EDT with all 8 batch rows predating it.
+    # Cohort boundary source: index.json per-entry captured_at (VERIFIED to
+    # exist — Sammy's per-site probe had read the top-level wrapper, not the
+    # nested entries). Without a boundary, rows stay in and the profile says
+    # cohort: unattested instead of pretending.
+    rows_before_cohort = 0
+    if baseline_captured_at:
+        current = [r for r in rows if str(r.get("ts", "")) >= baseline_captured_at]
+        rows_before_cohort = len(rows) - len(current)
+        rows = current
+    if not rows:
+        return {"baseline_key": key, "status": "no_cohort_rows",
+                "baseline_captured_at": baseline_captured_at,
+                "rows_before_cohort": rows_before_cohort, "not_for_alerting": True,
+                "note": "all control rows predate the current baseline capture"
+                        " (§7 cohort-zero); controls must re-run post-recapture"}
     n_bands = max(r.get("n_bands", 0) for r in rows)
     bands = []
     ever_diverged = False
@@ -190,6 +210,8 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
             "rotation_noise_span_reference": MEASURED_ROTATION_NOISE_SPAN,
             "k_placeholder": K_PLACEHOLDER,
         },
+        "baseline_captured_at": baseline_captured_at,
+        "rows_before_cohort": rows_before_cohort,
         "control_n": n,
         "trigger_split": {"auto": len(auto_rows), "manual": n - len(auto_rows),
                           "note": "auto rows are schedule-only; manual rows inflate N "
@@ -216,6 +238,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("control_jsonl")
     ap.add_argument("--attest-dir", default=".")
+    ap.add_argument("--index", default=None,
+                    help="baseline index.json; supplies per-entry captured_at "
+                         "for §7 cohort-zero (pre-recapture rows dropped, "
+                         "count reported in the profile)")
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--threshold", type=float, default=0.995)
     ap.add_argument("--margin", type=float, default=0.005)
@@ -227,17 +253,31 @@ def main():
     for r in rows:
         by_key.setdefault(r["baseline_key"], []).append(r)
 
+    index_entries = {}
+    if args.index:
+        index_entries = json.load(open(args.index)).get("baselines", {})
+
     os.makedirs(args.out_dir, exist_ok=True)
     exit_red = 0
     for key, krows in sorted(by_key.items()):
         prof = build_profile(key, krows, args.threshold, args.margin,
-                             args.min_n, load_attestation(args.attest_dir, key))
+                             args.min_n, load_attestation(args.attest_dir, key),
+                             baseline_captured_at=(
+                                 index_entries.get(key, {}).get("captured_at")))
         out = os.path.join(args.out_dir, f"tolerance_{key}.json")
         with open(out, "w") as f:
             json.dump(prof, f, indent=2, sort_keys=True)   # sort_keys: deterministic bytes
+        if prof["status"] == "no_cohort_rows":
+            print(f"{key}: status=no_cohort_rows — dropped {prof['rows_before_cohort']} "
+                  f"pre-recapture rows (cohort starts {prof['baseline_captured_at']}) -> {out}")
+            continue
+        dropped = prof.get("rows_before_cohort") or 0
+        bs = prof["trigger_split"]
+        blocking = {k: v for k, v in prof["graduation_blockers"].items() if v != "ok"}
         print(f"{key}: status={prof['status']} N={prof['control_n']} "
-              f"(auto={prof['trigger_split']['auto']}/manual={prof['trigger_split']['manual']}) "
-              f"blockers={ {k: v for k, v in prof['graduation_blockers'].items() if v != 'ok'} or 'none' } "
+              f"{'[dropped ' + str(dropped) + ' pre-cohort] ' if dropped else ''}"
+              f"(auto={bs['auto']}/manual={bs['manual']}) "
+              f"blockers={blocking or 'none'} "
               f"bands=[{', '.join(b.get('state','?') for b in prof['bands'])}] "
               f"k={prof['k_derivation']['k_used']} -> {out}")
         if prof["status"] == "rejected_unattested":

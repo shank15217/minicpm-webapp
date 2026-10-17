@@ -329,3 +329,35 @@ def test_trigger_split_and_auto_only_quantile_ship():
     assert b0["auto_n"] == 2
     assert b0["auto_p95"] == C.p95([0.999, 0.998])
     assert b0["raw_p95"] == C.p95([0.999, 0.998, 0.990])
+
+
+# --- §7 cohort-zero (baseline recapture resets calibration) ----------------
+
+def test_cohort_zero_drops_pre_recapture_rows():
+    rows = rows_for("coh", [[0.999]] * 6, hours=[0, 6, 12, 18, 0, 6])
+    for i, ts in enumerate(["2026-10-15T10:00:00Z", "2026-10-15T20:00:00Z",
+                            "2026-10-16T02:00:00Z", "2026-10-16T08:00:00Z",
+                            "2026-10-16T14:00:00Z", "2026-10-16T20:00:00Z"]):
+        rows[i]["ts"] = ts
+    prof = C.build_profile("coh", rows, THRESHOLD, 0.005, 4, _attested(),
+                           baseline_captured_at="2026-10-16T01:20:00Z")
+    assert prof["rows_before_cohort"] == 2
+    assert prof["control_n"] == len(rows) - 2      # N counts CURRENT cohort only
+    assert prof["baseline_captured_at"] == "2026-10-16T01:20:00Z"
+
+
+def test_cohort_zero_all_pre_recapture_is_no_cohort_rows_not_ready():
+    rows = rows_for("old", [[0.999]] * 6, hours=[0, 6, 12, 18, 0, 6])
+    for r in rows:
+        r["ts"] = "2026-10-15T12:00:00Z"
+    prof = C.build_profile("old", rows, THRESHOLD, 0.005, 5, _attested(),
+                           baseline_captured_at="2026-10-16T01:20:00Z")
+    assert prof["status"] == "no_cohort_rows" and prof["not_for_alerting"] is True
+    assert prof["rows_before_cohort"] == 6
+
+
+def test_cohort_boundary_none_keeps_rows_records_null():
+    prof = C.build_profile("nb", rows_for("nb", [[0.999]] * 5, hours=[0, 6, 12, 18, 23]),
+                           THRESHOLD, 0.005, 5, _attested(), baseline_captured_at=None)
+    assert prof["baseline_captured_at"] is None
+    assert prof["rows_before_cohort"] == 0 and prof["control_n"] == 5
