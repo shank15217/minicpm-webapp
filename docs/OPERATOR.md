@@ -94,6 +94,13 @@ for f in minicpm-monitor.service minicpm-monitor.timer \
   git show FETCH_HEAD:deploy/systemd/$f > ~/.config/systemd/user/$f
 done                                                     # all four verified to materialize this way
 # ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
+# (PLACEMENT CONTRACT, decided 2026-10-17: monitorlib.py lives at the REPO
+# ROOT — that is the deploy contract, systemd ExecStart runs it from the repo
+# root; it does NOT move to scripts/. Never hot-copy it onto main: there it
+# is untracked and BLOCKS `git checkout v0.5-dev` — git blocks on file
+# existence, not content, even when byte-identical (Sammy, measured). If a
+# checkout ever aborts naming monitorlib.py: mv monitorlib.py /tmp &&
+# git checkout -B v0.5-dev origin/v0.5-dev — git materializes it identically.)
 # v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
 # Pull it into the same place the unit expects:
 git show FETCH_HEAD:monitorlib.py > /root/minicpm-webapp/monitorlib.py
