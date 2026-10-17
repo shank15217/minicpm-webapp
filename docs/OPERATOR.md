@@ -10,9 +10,13 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 
 ## Part A — tonight, in order (≈15 min, your hands)
 
-### A1. Upgrade production :8000 to v0.4.3  (this is runbook test "U1")
-Prod currently runs a pre-v0.4 checkout (`75f1d4b`) — none of the
-deterministic-judge work is live until you do this step.
+### A1. Put gate-certified code in service on :8000  (this is runbook test "U1")
+Measured prod state (ss + git, tonight): checkout sits detached at `5a1f892`
+(the v0.4.3 tag) but **nothing serves :8000** — the pre-v0.4 process from
+earlier today is gone — and both towers (`:8080`/`:8081`) are UP on Q8_0
+after the starter fix. So A1 is now just: get onto `main` (which is the tag
+plus docs plus the starter fix, zero app-code delta) and start. If `:8000`
+shows a listener again before you run this, kill it first.
 ```bash
 cd /root/minicpm-webapp
 # Prod :8000 is a BARE uvicorn process, not a systemd unit (QA-verified:

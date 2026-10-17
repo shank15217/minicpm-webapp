@@ -6,8 +6,16 @@ hedged. When you finish, your feedback items map to the numbered tests.
 
 Ship state: tag **`v0.4.3`** (first release certified end-to-end by its own
 gate: suite + positive controls + tag ritual in one command). `main` = tag +
-docs. Two baselines are live on pvellm (`example.com`, `fhlb-of.com`).
-Production `:8000` is still the OLD v0.2.1 tree until you run section 1.
+docs + the starter-script fix (`4397321`), zero app-code delta (audited
+twice, `git diff --stat v0.4.3..origin/main` = 5 files, all docs/scripts).
+Two baselines are live on pvellm (`example.com`, `fhlb-of.com`).
+Production state tonight: checkout sits at the tag but **nothing is serving
+`:8000`** (the old pre-v0.4 process is gone); both towers are UP on Q8_0.
+
+**Doc ownership (sync rule, per @user):** this file owns the TEST CRITERIA
+(U1–U6) and the WEAKNESSES LEDGER (W1–W11). `docs/OPERATOR.md` owns the
+COMMANDS. Where this file shows a command, OPERATOR.md is the source of
+truth; if they ever disagree, OPERATOR.md wins and this file has a bug.
 
 ---
 
@@ -28,24 +36,20 @@ POST /analyze url=...            -> screenshot live page
    all bands differ + height moved-> verdict "site-updated" -> human review, not a deface alert
 ```
 
-## 1. Upgrade production pvellm `:8000` from v0.2.1  (your hands)
+## 1. Upgrade production pvellm `:8000`  (your hands — test "U1")
 
-Order matters: the DB migration runs at app startup. Stop → upgrade → start.
-Skipping the stop hard-500s every /analyze mid-window (tested contract:
-`tests/test_startup_migration.py`).
+**Commands: see `docs/OPERATOR.md` Part A1, verbatim.** (Sync rule: the old
+block that lived here named a systemd unit that does not exist on pvellm and
+`git checkout v0.4.3`, which parks the broken starter script indefinitely —
+two of tonight's three fix-doc-carried traps. They are deleted, not
+annotated.) Order-of-operations doctrine stays: stop any listener → move
+refs → start; the DB migration runs at app startup (tested contract:
+`tests/test_startup_migration.py`), and skipping the stop hard-500s every
+/analyze mid-window.
 
-```bash
-cd /root/minicpm-webapp
-sudo systemctl stop minicpm-webapp            # or kill the start_app.sh process
-git fetch origin && git checkout v0.4.3
-uv sync --extra dev
-sudo systemctl start minicpm-webapp           # migration lands the new columns here
-curl -s localhost:8000/health                 # expect {"16x":"ok","4x":"ok","playwright":"available",...}
-```
-
-Optional, separately, whenever you like (stateless w.r.t. the app): restart
-the towers onto the Q8_0 weights per DEPLOY.md (`GGUF` default is now Q8_0;
-`GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf` rolls back).
+Towers: both UP tonight on Q8_0 via the fixed starter; the Q4-vs-Q8 choice
+is one `GGUF=` env var at any future relaunch (`start_llama_servers.sh`
+preserves anything already healthy).
 
 **Verify round-trip (test U1):**
 ```bash
