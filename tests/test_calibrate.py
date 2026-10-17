@@ -361,3 +361,46 @@ def test_cohort_boundary_none_keeps_rows_records_null():
                            THRESHOLD, 0.005, 5, _attested(), baseline_captured_at=None)
     assert prof["baseline_captured_at"] is None
     assert prof["rows_before_cohort"] == 0 and prof["control_n"] == 5
+
+
+# --- attestation gate: exact membership, never substring -------------------
+# Room 2026-10-17 (Sammy's attack round): the old gate was
+# `"attested" in str(status)` — every natural negative phrasing contains the
+# magic substring and cleared it. Negation-by-prefix must never pass a gate.
+
+NEGATION_STATUSES = [
+    "unattested", "not attested", "rejected_unattested",
+    "attestation_expired", "attested-not", "not-attested",
+    "withdrawn-anchor-mask-required-before-tolerance-learning",
+    "attestation_unreadable", "", None, 0, "ATTESTED",  # case-exact too
+]
+
+
+@pytest.mark.parametrize("status", NEGATION_STATUSES)
+def test_negation_and_unknown_statuses_never_clear_gate(status):
+    assert C.attestation_clears_gate({"status": status}) is False
+    assert C.attestation_clears_gate({"status": status,
+                                      "reason": "looks attested really"}) is False
+
+
+def test_registered_statuses_clear_gate():
+    for status in C.ATTESTED_STATUSES:
+        assert C.attestation_clears_gate({"status": status}) is True
+    assert C.attestation_clears_gate(None) is False
+    assert C.attestation_clears_gate({}) is False  # missing status key
+
+
+def test_diverged_with_negation_status_stays_rejected():
+    # End-to-end through build_profile: a diverged baseline whose attestation
+    # file says "not attested" must be rejected_unattested, and an unregistered
+    # status must be named in the blockers rather than silently treated as
+    # missing OR as clearance.
+    rows = rows_for("k1", [[0.50, 1.0]] * 7, hours=[0, 6, 12, 18] * 2)
+    prof = C.build_profile("k1", rows, THRESHOLD, 0.005, min_n=5,
+                           attest={"status": "not attested"})
+    assert prof["status"] == "rejected_unattested"
+    assert "not attested" in prof["graduation_blockers"]["attestation"]
+    prof2 = C.build_profile("k1", rows, THRESHOLD, 0.005, min_n=5,
+                            attest={"status": "attested-rotation-provisional"})
+    assert prof2["status"] != "rejected_unattested"
+    assert prof2["graduation_blockers"]["attestation"] == "ok"

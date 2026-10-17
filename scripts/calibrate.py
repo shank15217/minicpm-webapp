@@ -91,6 +91,30 @@ def trigger_of(row: dict) -> str:
     return "auto" if str(row.get("window", "")).startswith("auto") else "manual"
 
 
+# ---------------------------------------------------------------------------
+# Attestation gate (room 2026-10-17, Sammy's attack round): EXACT membership
+# in this code-side registry. The previous gate was
+#     attest and "attested" in str(attest.get("status", ""))
+# which is negation-by-prefix defeated: "unattested", "not attested", and
+# "rejected_unattested" all CONTAIN the magic substring and would clear the
+# gate as if they were attestations. Unknown statuses never clear and are
+# reported as a named blocker, so new attestation vocabulary must be
+# registered here — i.e. pass code review — instead of being coined into a
+# JSON file beside the code.
+ATTESTED_STATUSES = frozenset({
+    "attested",                       # full attestation, adjudicated
+    "attested-rotation-provisional",  # rotating-band attestation, provisional
+})
+
+
+def attestation_clears_gate(attest: dict | None) -> bool:
+    return bool(attest) and attest.get("status") in ATTESTED_STATUSES
+
+
+def attestation_unregistered(attest: dict | None) -> bool:
+    return bool(attest) and attest.get("status") not in ATTESTED_STATUSES
+
+
 def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
                   min_n: int, attest: dict | None,
                   baseline_captured_at: str | None = None) -> dict:
@@ -172,7 +196,7 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
     # N < min_n cannot support the fraction estimate: placeholder, marked.
     k = K_PLACEHOLDER if (n < min_n or k_frac is None) else max(1, min(n_bands, math.ceil(n_bands * k_frac * 2) or 1))
 
-    diverged_unattested = ever_diverged and not (attest and "attested" in str(attest.get("status", "")))
+    diverged_unattested = ever_diverged and not attestation_clears_gate(attest)
     # Two-axis graduation (Sammy's sharpening, Quinn's gate shape): counts do
     # not graduate alone — a p95 from an evening cluster estimates evening
     # dynamics and reads as well-sampled while being systematically wrong
@@ -184,7 +208,9 @@ def build_profile(key: str, rows: list[dict], threshold: float, margin: float,
         "windows_covered": ("ok" if len(covered) >= len(DIURNAL_WINDOW_HOURS)
                             else f"{len(covered)}/{len(DIURNAL_WINDOW_HOURS)}"),
         "days": "ok" if len(days) >= 2 else f"{len(days)}/2",
-        "attestation": "ok" if attestation_ok else "missing",
+        "attestation": ("ok" if attestation_ok else
+                        (f"unregistered:{(attest or {}).get('status')!r}"
+                         if attestation_unregistered(attest) else "missing")),
     }
     if diverged_unattested:
         status = "rejected_unattested"
