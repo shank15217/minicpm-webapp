@@ -373,6 +373,78 @@ async def _record(**fields) -> None:
     await anyio.to_thread.run_sync(functools.partial(record_run, **fields))
 
 
+def certificate_details(url: str, timeout: float = 8.0) -> dict:
+    """Raw TLS certificate facts for a host, gathered UNVERIFIED (that is the
+    point: the connection we are diagnostics-ing is the one that fails
+    verification). Never raises — diagnosis must not itself 500.
+
+    verify_error carries the exact reason Chromium/Python refused:
+    'self signed certificate', 'certificate has expired',
+    "hostname mismatch", ... — the WHAT behind an SSL_* code.
+    """
+    import socket as _socket
+    import ssl as _ssl
+    import urllib.parse as _up
+    out = {"host": None, "port": None, "verified": False,
+           "verify_error": None, "subject": None, "issuer": None,
+           "not_before": None, "not_after": None, "days_until_expiry": None,
+           "subject_alt_names": [], "serial": None, "version": None}
+    try:
+        u = _up.urlparse(url if "://" in url else "https://" + url)
+        host = u.hostname
+        port = u.port or 443
+        out["host"], out["port"] = host, port
+        if not host:
+            out["verify_error"] = "no hostname in URL"
+            return out
+
+        def _ctx(verified: bool):
+            ctx = _ssl.create_default_context()
+            if not verified:
+                ctx.check_hostname = False
+                ctx.verify_mode = _ssl.CERT_NONE
+            return ctx
+
+        # pass 1: verified handshake -> the refusal reason, if any
+        try:
+            with _socket.create_connection((host, port), timeout=timeout) as raw:
+                with _ctx(True).wrap_socket(raw, server_hostname=host) as tls:
+                    out["verified"] = True
+        except _ssl.SSLCertVerificationError as e:
+            out["verify_error"] = e.verify_message or str(e)
+        except Exception as e:
+            # network-level failure: the SSL_* classify already covers it
+            out["verify_error"] = f"{type(e).__name__}: {e}"
+            return out
+
+        # pass 2: unverified handshake -> the actual certificate
+        with _socket.create_connection((host, port), timeout=timeout) as raw:
+            with _ctx(False).wrap_socket(raw, server_hostname=host) as tls:
+                cert = tls.getpeercert()
+        if not cert:
+            return out
+        fmt = lambda t: f"{t[0:4]:04d}-{t[1]:02d}-{t[2]:02d}T{t[3]:02d}:{t[4]:02d}:{t[5]:02d}Z"
+        import datetime as _dt
+        if cert.get("notBefore"):
+            out["not_before"] = cert["notBefore"]
+            nb = _dt.datetime.strptime(cert["notBefore"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=_dt.timezone.utc)
+            if cert.get("notAfter"):
+                na = _dt.datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=_dt.timezone.utc)
+                out["not_after"] = cert["notAfter"]
+                out["days_until_expiry"] = (na - _dt.datetime.now(_dt.timezone.utc)).days
+        def _flat(d):
+            return ", ".join(f"{k}={v}" for pair in d for k, v in pair.items())
+        out["subject"] = _flat(cert.get("subject", ()))
+        out["issuer"] = _flat(cert.get("issuer", ()))
+        out["subject_alt_names"] = [v for k, vs in cert.get("subjectAltName", ()) for v in [vs] if k == "DNS"]
+        out["serial"] = cert.get("serial")
+        out["version"] = cert.get("version")
+        return out
+    except Exception as e:
+        out["verify_error"] = out["verify_error"] or f"{type(e).__name__}: {e}"
+        return out
+
+
 def _last_good_check(url: str) -> bool:
     """True if this URL ever completed an OK check (run_history is the record)."""
     try:
@@ -670,12 +742,15 @@ async def analyze(
             await _record(url=url, mode=mode, status="CHECK_FAILED",
                           error_code="UNAUTHENTICATED_BASELINE_REJECTED",
                           elapsed_s=round(time.perf_counter() - start_time, 2))
+            cert_info = await anyio.to_thread.run_sync(
+                functools.partial(certificate_details, url))
             return JSONResponse(
                 {"status": "CHECK_FAILED",
                  "error_code": "UNAUTHENTICATED_BASELINE_REJECTED",
                  "error": f"baseline must be captured over verified TLS "
                           f"(tls error: {tls_info['error']}); fix the cert "
                           "or use a dated capture",
+                 "cert_info": cert_info,
                  "note": "no baseline written"},
                 status_code=409,
             )
@@ -784,6 +859,9 @@ async def analyze(
                        elapsed_s=round(time.perf_counter() - start_time, 2))
             payload = {"status": "CHECK_FAILED", "error_code": e.code,
                        "detail": str(e)}
+            if e.code.startswith("SSL_"):
+                payload["cert_info"] = await anyio.to_thread.run_sync(
+                    functools.partial(certificate_details, url))
             finding = _unreachable_finding(url, e.code)
             if finding:
                 payload["finding"] = finding
@@ -806,6 +884,9 @@ async def analyze(
                               elapsed_s=round(time.perf_counter() - start_time, 2))
                 payload = {"status": "CHECK_FAILED", "error_code": e.code,
                            "error": str(e), "url": url}
+                if e.code.startswith("SSL_"):
+                    payload["cert_info"] = await anyio.to_thread.run_sync(
+                        functools.partial(certificate_details, url))
                 finding = _unreachable_finding(url, e.code)
                 if finding:
                     payload["finding"] = finding
