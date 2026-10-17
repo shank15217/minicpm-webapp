@@ -10,20 +10,43 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 
 ## Part A — tonight, in order (≈15 min, your hands)
 
-### A1. Upgrade production :8000 to v0.4.3  (this is runbook test "U1")
-Prod currently runs a pre-v0.4 checkout (`75f1d4b`) — none of the
-deterministic-judge work is live until you do this step.
+### A1. Put gate-certified code in service on :8000  (this is runbook test "U1")
+Measured prod state (ss + git, tonight): checkout sits detached at `5a1f892`
+(the v0.4.3 tag) but **nothing serves :8000** — the pre-v0.4 process from
+earlier today is gone — and both towers (`:8080`/`:8081`) are UP on Q8_0
+after the starter fix. So A1 is now just: get onto `main` (which is the tag
+plus docs plus the starter fix, zero app-code delta) and start. If `:8000`
+shows a listener again before you run this, kill it first.
 ```bash
 cd /root/minicpm-webapp
-# stop the old app however you started it (uvicorn/terminal); if via systemd:
-sudo systemctl stop minicpm-webapp        # only if the unit exists
-git fetch origin && git checkout v0.4.3   # first tag certified end-to-end by its own gate
-./scripts/start_app.sh                    # DB migration runs automatically at startup (pinned test)
+# Prod :8000 is a BARE uvicorn process, not a systemd unit (QA-verified:
+# `systemctl list-unit-files | grep minicpm` returns nothing on pvellm today).
+# Find and stop it first — ss prints the pid:
+ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kill that pid
+git fetch origin && git checkout -B main origin/main   # -B is MANDATORY, not style (QA-verified on prod: local `main` ref is the stale pre-v0.4 tip 75f1d4b and `git fetch` never moves local branch refs — plain `checkout main` boots yesterday's code through the correct-looking script). -B is safe here: 75f1d4b is an ancestor of origin/main, local main has zero unique commits, baselines/ is untracked. Why main not the tag: v0.4.3..origin/main is 5 files, ALL docs + start_llama_servers.sh — zero app code (audited twice), and the starter fix (LLAMA_BIN default + fail-loud) landed AFTER the tag cut (merge-base receipt), so `checkout v0.4.3` parks the broken starter in prod indefinitely. Runtime is byte-identical to the gate-certified tag either way.
+nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
 curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
 ```
 Ping-pong any surprise to the room with the test ID (U1) — Quinn health-gates
 + runs a verification round-trip on your word.
+
+**Rollback (if v0.4.3 health goes red):**
+```bash
+# kill the new app's pid (ss -tlnp | grep ':8000 '), then:
+git checkout 75f1d4b && nohup ./scripts/start_app.sh > app.log 2>&1 &
+```
+Verification status, stated honestly (QA probe on a copied store, prod
+untouched): **old code BOOTS against a migrated DB — verified** (health
+answers on a throwaway with all three new columns present; migration is
+additive `ALTER ADD COLUMN` and old INSERTs name columns explicitly, so
+extra columns can't break it). **Not yet verified: the old code's full
+analyze write-path** — the throwaway's baseline lookup didn't reproduce
+prod's working path (probe artifact, cause unpinned), and both towers are
+DOWN as of this writing, so no end-to-end old-code run was possible. Net:
+rollback is expected-safe, and the first time you use it will be the proof —
+expect `{"16x":"unreachable"...}` in health until the towers are back
+regardless of which version you're on.
 
 ### A2. Vision towers (only when you relaunch them — decision included)
 Corrected semantics (README's old text was inverted; fixed in `888286d`):
@@ -41,8 +64,19 @@ fact: more detail always costs tokens; measured 832 vs 223 on identical images.)
 The kit is shipped and pinned but **not installed** — installing is yours:
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/systemd/minicpm-monitor.{service,timer} ~/.config/systemd/user/
-cp deploy/systemd/minicpm-monitor-stale.{service,timer} ~/.config/systemd/user/
+# NOTE: the monitor kit ships on v0.5-dev only — it is NOT in the v0.4.3 tag
+# you just checked out, so pull the four unit files straight from that ref
+# (QA-verified 2026-10-16: `ls deploy/systemd/` in a v0.4.3 checkout does not
+# contain minicpm-monitor*).
+cd /root/minicpm-webapp && git fetch origin v0.5-dev   # prod clone tracks only main by default (QA-verified)
+for f in minicpm-monitor.service minicpm-monitor.timer \
+         minicpm-monitor-stale.service minicpm-monitor-stale.timer; do
+  git show FETCH_HEAD:deploy/systemd/$f > ~/.config/systemd/user/$f
+done                                                     # all four verified to materialize this way
+# ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
+# v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
+# Pull it into the same place the unit expects:
+git show FETCH_HEAD:monitorlib.py > /root/minicpm-webapp/monitorlib.py
 # EDIT MPW_DIR/MPW_BASE in the two .service files if your paths differ
 loginctl enable-linger $USER
 systemctl --user daemon-reload

@@ -12,7 +12,10 @@
 # Edit defaults below if your layout differs, or export before running.
 set -euo pipefail
 
-LLAMA_BIN="${LLAMA_BIN:-/usr/local/bin/llama-server}"
+# Binary default is the pvellm/DEPLOY.md build location. The old default
+# /usr/local/bin/llama-server exists on NO known host and nohup-failed
+# silently into a log (user-visible symptom: "nothing starts", rc=0).
+LLAMA_BIN="${LLAMA_BIN:-/AITOOLCHAIN/llama.cpp/build/bin/llama-server}"
 MODEL_DIR="${MODEL_DIR:-/AITOOLCHAIN/models/MiniCPM-V-4.7}"
 # Q8_0 per owner ruling (2026-10-15): best-quality quant of MiniCPM-V 4.7.
 # Set GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf to roll back.
@@ -46,9 +49,24 @@ start_one 8080 "$MMPROJ_16X" 16x
 start_one 8081 "$MMPROJ_4X" 4x
 
 echo "Waiting for /health ..."
+FAILED=""
 for port in 8080 8081; do
+    label=$([ "$port" = 8080 ] && echo 16x || echo 4x)
+    ok=""
     for _ in $(seq 1 60); do
-        curl -sf -m 2 "http://127.0.0.1:${port}/health" >/dev/null && { echo ":$port healthy"; break; }
+        curl -sf -m 2 "http://127.0.0.1:${port}/health" >/dev/null && { echo ":$port healthy"; ok=1; break; }
         sleep 1
     done
+    [ -n "$ok" ] || FAILED="$FAILED :$port"
 done
+if [ -n "$FAILED" ]; then
+    # Fail LOUD: a starter that exits 0 while nothing came up hands the user
+    # "nothing happened" instead of the truth (this exact script did tonight).
+    echo "ERROR: llama-server never became healthy on:$FAILED" >&2
+    for port in $FAILED; do
+        label=$([ "$port" = ":8080" ] && echo 16x || echo 4x)
+        echo "--- tail $LOGDIR/llama-$label.log ---" >&2
+        tail -5 "$LOGDIR/llama-$label.log" >&2 2>/dev/null || echo "(no log file)" >&2
+    done
+    exit 1
+fi
