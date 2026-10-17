@@ -13,9 +13,12 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 ### A1. Put gate-certified code in service on :8000  (this is runbook test "U1")
 > **Re-measure before trusting this block (doc-vs-host drift rule):** the
 > state facts below were true at write time, not by contract. Re-check in
-> 5 seconds: `cd /root/minicpm-webapp && git rev-parse HEAD main origin/main`
-> · `ss -tlnp | grep ':8000 '` · `curl -s -m2 localhost:8080/health`. If any
-> fact disagrees, the doc is stale — say so in the room, don't improvise.
+> 5 seconds:
+> - refs: `cd /root/minicpm-webapp && git rev-parse HEAD main origin/main`
+> - app port: `ss -tlnp | grep ':8000 '`
+> - towers (both — a dead `:8081` reads healthy to an :8080-only probe):
+>   `curl -s -m2 localhost:8080/health` · `curl -s -m2 localhost:8081/health`
+> If any fact disagrees, the doc is stale — say so in the room, don't improvise.
 Measured prod state (ss + git, tonight): checkout sits detached at `5a1f892`
 (the v0.4.3 tag) but **nothing serves :8000** — the pre-v0.4 process from
 earlier today is gone — and both towers (`:8080`/`:8081`) are UP on Q8_0
@@ -28,7 +31,19 @@ cd /root/minicpm-webapp
 # `systemctl list-unit-files | grep minicpm` returns nothing on pvellm today).
 # Find and stop it first — ss prints the pid:
 ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kill that pid
-git fetch origin && git checkout -B main origin/main   # -B is MANDATORY, not style (QA-verified on prod: local `main` ref is the stale pre-v0.4 tip 75f1d4b and `git fetch` never moves local branch refs — plain `checkout main` boots yesterday's code through the correct-looking script). -B is safe here: 75f1d4b is an ancestor of origin/main, local main has zero unique commits, baselines/ is untracked. Why main not the tag: v0.4.3..origin/main is 5 files, ALL docs + start_llama_servers.sh — zero app code (audited twice), and the starter fix (LLAMA_BIN default + fail-loud) landed AFTER the tag cut (merge-base receipt), so `checkout v0.4.3` parks the broken starter in prod indefinitely. Runtime is byte-identical to the gate-certified tag either way.
+# Why `checkout -B main origin/main` — four proofs, one per line (content
+# frozen, shape per QA 3 AM-skim ruling):
+#   1. -B is MANDATORY, not style: local `main` is the stale pre-v0.4 tip
+#      (75f1d4b) and `git fetch` never moves local branch refs — plain
+#      `checkout main` boots yesterday's code through the correct-looking script.
+#   2. -B is safe HERE: 75f1d4b is an ancestor of origin/main, local main has
+#      zero unique commits, and baselines/ is untracked (working tree survives).
+#   3. Why main, not the tag: v0.4.3..origin/main is 5 files, ALL docs +
+#      start_llama_servers.sh — zero app code (audited twice).
+#   4. The starter fix (LLAMA_BIN default + fail-loud) landed AFTER the tag
+#      cut (merge-base receipt), so `checkout v0.4.3` parks the broken starter
+#      in prod indefinitely. Runtime on main is byte-identical to the tag.
+git fetch origin && git checkout -B main origin/main
 nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
 curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
