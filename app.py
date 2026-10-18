@@ -567,6 +567,24 @@ async def call_llama(messages: list, mode: str = "detail") -> dict:
     }
 
 
+async def _chromium_page_text(url: str):
+    """Strict-TLS headless Chromium fetch for the trust-store fallback.
+    Returns page text, or None on any failure (caller keeps original error)."""
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch()
+            try:
+                page = await browser.new_page()
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                return await page.evaluate(
+                    "document.body ? document.body.innerText : ''")
+            finally:
+                await browser.close()
+    except Exception:
+        return None
+
+
 async def fetch_page_text(url: str) -> str:
     """Fetch plain text content from a URL for comparison.
 
@@ -582,8 +600,20 @@ async def fetch_page_text(url: str) -> str:
         resp.raise_for_status()
         text = resp.text
     except Exception as e:
-        raise CheckFailed(classify_capture_error(e, url),
-                          f"{url}: {type(e).__name__}: {e}")
+        code = classify_capture_error(e, url)
+        if code.startswith("SSL_"):
+            # Trust-store divergence, QNAP case (user, 2026-10-18): servers
+            # that ship leaf-only chains fail Python/OpenSSL (no local issuer)
+            # while Chromium verifies them fine via its own Chrome Root Store
+            # + limited AIA intermediate fetch. Chromium's verdict is real
+            # verification, not bypass — fall back to it instead of declaring
+            # a browser-perfect site operationally broken. Strict mode: we do
+            # NOT set ignore_https_errors here; if Chromium also refuses, the
+            # site genuinely fails and the original classified error stands.
+            ctext = await _chromium_page_text(url)
+            if ctext is not None:
+                return ctext[:2000]
+        raise CheckFailed(code, f"{url}: {type(e).__name__}: {e}")
     text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
