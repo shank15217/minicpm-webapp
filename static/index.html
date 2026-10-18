@@ -108,11 +108,29 @@
       const prompt = document.getElementById('prompt').value;
       if (prompt) formData.append('prompt', prompt);
 
+        function certPanelLines(c) {
+          // One renderer for every surface (defect 2026-10-17: the panel was
+          // trapped in the success branch, so it was unreachable on exactly
+          // the TLS-rejection paths that motivated it). API payload != feature.
+          if (!c) return '';
+          let t = `--- certificate (${c.host}:${c.port}) ---\n`;
+          t += `verified: ${c.verified}${c.verify_error ? ' — reason: ' + c.verify_error : ''}\n`;
+          if (c.issuer) t += `issuer: ${c.issuer}\n`;
+          if (c.subject) t += `subject: ${c.subject}\n`;
+          if (c.not_before || c.not_after) t += `valid: ${c.not_before || '?'} -> ${c.not_after || '?'}${(c.days_until_expiry !== null && c.days_until_expiry !== undefined) ? ' (' + c.days_until_expiry + ' days)' : ''}\n`;
+          if (c.subject_alt_names && c.subject_alt_names.length) t += `SANs: ${c.subject_alt_names.join(', ')}\n`;
+          return t;
+        }
+
       try {
         const resp = await fetch('/analyze', { method: 'POST', body: formData });
         const data = await resp.json();
         if (data.error) {
-          resultDiv.textContent = 'Error: ' + data.error;
+          let et = 'Error: ' + data.error;
+          if (data.error_code) et += `\nerror_code: ${data.error_code}`;
+          if (data.note) et += `\n${data.note}`;
+          if (data.cert_info) et += '\n' + certPanelLines(data.cert_info);
+          resultDiv.textContent = et;
         } else {
           let text = '';
           if (data.elapsed_seconds !== undefined) {
@@ -130,13 +148,7 @@
             if (data.error_code) text += `error_code: ${data.error_code}${data.detail ? ' — ' + data.detail : ''}\n`;
             if (data.tls && !data.tls.verified) text += `TLS: ${data.tls.error} — captured with cert checks DISABLED; content unauthenticated\n`;
             if (data.warning) text += `WARNING: ${data.warning}\n`;
-            if (data.cert_info) { const c = data.cert_info;
-              text += `--- certificate (${c.host}:${c.port}) ---\n`;
-              text += `verified: ${c.verified}${c.verify_error ? ' — reason: ' + c.verify_error : ''}\n`;
-              if (c.issuer) text += `issuer: ${c.issuer}\n`;
-              if (c.subject) text += `subject: ${c.subject}\n`;
-              if (c.not_before || c.not_after) text += `valid: ${c.not_before || '?'} -> ${c.not_after || '?'}${c.days_until_expiry !== null && c.days_until_expiry !== undefined ? ' (' + c.days_until_expiry + ' days)' : ''}\n`;
-              if (c.subject_alt_names && c.subject_alt_names.length) text += `SANs: ${c.subject_alt_names.join(', ')}\n`; }
+            text += certPanelLines(data.cert_info);
             if (data.deterministic && !data.deterministic.error) {
               const d = data.deterministic;
               text += `page_sim: ${d.page_sim} (alert threshold ${d.threshold})\n`;
