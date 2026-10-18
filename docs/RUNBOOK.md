@@ -147,6 +147,18 @@ S2b redirect-SSRF, S4 structured score + verdict-derivation (v0.5 contract),
 each xfail-marked and gate-visible — this is disclosure, not hidden debt.
 Do not expose :8000 publicly before S2/S2b close; LAN-only per house policy.
 
+W5b **v0.3 scope accepted: no-baseline failure-mode transition signal
+(Sammy, 2026-10-18).** Targets that never graduated can never alert under
+current doctrine — a host with no baseline can change how it fails
+(e.g. persistent SSL_* -> DNS_FAILURE/NETWORK_UNREACHABLE, the console's
+exact run_history biography) with zero output. Accepted as DEGRADED-level
+(not finding-level), reading only run_history: alert when an error_code
+run reaches N consecutive occurrences and is then replaced by a different
+code sustained for N consecutive runs — the same N-consecutive primitive
+router's unreachable-threshold needs, so both share one mechanism and one
+noise dial. Explicit rejection: bare per-run code churn must never alert.
+Fixture: the console's existing run_history rows.
+
 W6 **Narration is advisory prose.** The 1B narrator can misdescribe; it can
 no longer flip a verdict (architecture + tests), but "what changed" text
 should be read as a lead, not a finding. Verdict language in narration =
