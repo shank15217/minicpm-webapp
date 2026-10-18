@@ -5,3 +5,5 @@ __pycache__/
 baselines/*.png
 baselines/index.json
 .DS_Store
+baselines/runs.db
+baselines/*.db
