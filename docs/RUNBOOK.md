@@ -157,7 +157,19 @@ run reaches N consecutive occurrences and is then replaced by a different
 code sustained for N consecutive runs — the same N-consecutive primitive
 router's unreachable-threshold needs, so both share one mechanism and one
 noise dial. Explicit rejection: bare per-run code churn must never alert.
-Fixture: the console's existing run_history rows.
+SIGNAL ALPHABET (Quinn amendment, same registry doctrine as the
+attestation gate): sequencing reads HOST-STATE codes only — a closed
+in-code set (DNS_FAILURE, NETWORK_UNREACHABLE, CONNECTION_REFUSED,
+SSL_CERT_EXPIRED, SSL_CERT_UNTRUSTED, SSL_HOSTNAME_MISMATCH, CAPTURE_FAILED).
+Client-intent codes (UNAUTHENTICATED_BASELINE_REJECTED and any future
+guard/test-authored code) are FILTERED BEFORE sequencing: they record
+operator probes, not host state — Quinn's 7 guard-rejection rows
+interleaved in the console history are exactly the fake-transition source
+this excludes.
+Fixtures (measured, baselines/runs.db): POSITIVE = console 13 rows,
+SSL_CERT_UNTRUSTED era (Oct 17-18) -> NETWORK_UNREACHABLE x2 (17:05);
+NEGATIVE = the guard-interleaved stretch 06:15-06:42 — with the exclusion,
+the sequencer must stay silent across it.
 
 W6 **Narration is advisory prose.** The 1B narrator can misdescribe; it can
 no longer flip a verdict (architecture + tests), but "what changed" text
