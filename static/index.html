@@ -119,6 +119,7 @@
           if (c.subject) t += `subject: ${c.subject}\n`;
           if (c.not_before || c.not_after) t += `valid: ${c.not_before || '?'} -> ${c.not_after || '?'}${(c.days_until_expiry !== null && c.days_until_expiry !== undefined) ? ' (' + c.days_until_expiry + ' days)' : ''}\n`;
           if (c.subject_alt_names && c.subject_alt_names.length) t += `SANs: ${c.subject_alt_names.join(', ')}\n`;
+          if (c.serial) t += `serial: ${c.serial}\n`;
           return t;
         }
 
@@ -139,7 +140,7 @@
           if (data.baseline_captured) {
             text += `Baseline captured for ${data.url}\nKey: ${data.baseline_key}\n${data.message}\n\nDescription of baseline:\n${data.description}\n`;
           } else {
-            text += `Mode: ${data.mode}\n`;
+            if (data.mode) text += `Mode: ${data.mode}\n`;
             // The confidence is DETERMINISTIC, not model-generated: page_sim
             // is the fraction-based band similarity that OWNS the verdict.
             // (A model-generated 0-100 score is deliberately absent — defect
@@ -165,7 +166,7 @@
             if (data.baseline_captured) text += '';
             if (data.using_stored_baseline) text += `Using stored baseline for this URL\n`;
             if (data.description_source) text += `Description source: ${data.description_source}\n`;
-            text += `\nDescription (advisory — W6: read as a lead, not a finding):\n${data.description}\n`;
+            if (data.description) text += `\nDescription (advisory — W6: read as a lead, not a finding):\n${data.description}\n`;
             if (data.verification) {
               text += `\n--- Verification ---\nURL: ${data.url}\n`;
               text += `Baseline source: ${data.baseline_source || 'uploaded'}\n`;

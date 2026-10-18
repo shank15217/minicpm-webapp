@@ -752,11 +752,14 @@ async def analyze(
             await _record(url=url, mode=mode, status="CHECK_FAILED",
                           error_code=e.code,
                           elapsed_s=round(time.perf_counter() - start_time, 2))
-            return JSONResponse(
-                {"status": "CHECK_FAILED", "error_code": e.code,
-                 "error": str(e)},
-                status_code=500,
-            )
+            payload = {"status": "CHECK_FAILED", "error_code": e.code,
+                       "error": str(e)}
+            if e.code.startswith("SSL_"):
+                # Quinn note 1 (re-lap): strict baseline failure carried the
+                # code but no cert facts — same gap class as the UI trap.
+                payload["cert_info"] = await anyio.to_thread.run_sync(
+                    functools.partial(certificate_details, url))
+            return JSONResponse(payload, status_code=500)
 
         # GUARD (Sammy/Quinn 2026-10-17, CRITICAL): an unauthenticated capture
         # must NEVER establish truth. A baseline captured with cert checks
