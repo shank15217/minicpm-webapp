@@ -212,6 +212,21 @@ the risk — baseline dir under git or nightly `restic`/`rsync` to another box
 plus a sha256 manifest checked at app start — but until it ships, treat
 baseline integrity as an assumption, not a property. *(Sammy's first-night
 objection, accepted into the ledger without argument.)*
+  STATUS 2026-10-19: **manifest half SHIPPED (detection), backup half is
+  operator cron.** Every new `capture_baseline` entry carries `sha256` of
+  its PNG; `load_baseline` refuses a disagreeing file with named
+  `BASELINE_INTEGRITY` (a silently edited baseline can no longer compare
+  green), `baseline_integrity_report()` surfaces ok/corrupt/unmanifested in
+  `/health`, and index + PNG writes are atomic (`tmp` + `os.replace`) with
+  `INDEX_CORRUPT` refusing to read a half-written index as empty — closing
+  review bug D's read-empty-then-wipe-everything path. Pre-manifest entries
+  (the six shipped baselines) load as `unmanifested` until re-captured —
+  hash is attached at capture, never after the fact, so a corrupt baseline
+  can never launder itself by having a hash pinned to its damaged bytes.
+  Residual: `scripts/backup_baselines.sh` exists (tar over ssh, verify,
+  14-daily retention) but installing it into cron on pvellm is the
+  operator's call; until installed, single-copy remains TRUE — detection,
+  not durability.
 
 W11 **v0.4.3 monitors nothing by itself.** No scheduler, no alert path, no
 retention policy: "monitoring" means someone POSTs `/analyze` and reads JSON.

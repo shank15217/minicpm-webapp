@@ -217,32 +217,86 @@ def load_index() -> dict:
         try:
             return json.loads(INDEX_PATH.read_text())
         except Exception:
-            return {"baselines": {}}
+            # A half-written index must NEVER be silently treated as empty and
+            # then re-saved (that is how an interrupted write wipes every
+            # baseline — external review bug D, 2026-10-19). Raise instead.
+            raise CheckFailed("INDEX_CORRUPT",
+                              f"{INDEX_PATH} is unreadable; refusing to proceed on an empty view "
+                              "of it (restore from backup or repair manually).")
     return {"baselines": {}}
 
 
 def save_index(index: dict):
-    INDEX_PATH.write_text(json.dumps(index, indent=2))
+    # Atomic: tmp + os.replace — readers see old or new file, never a half-write.
+    tmp = INDEX_PATH.with_name(INDEX_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(index, indent=2))
+    os.replace(tmp, INDEX_PATH)
+
+
+def _write_atomic(path: Path, data: bytes):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
 
 
 def save_baseline(url: str, image_bytes: bytes, description: Optional[str] = None) -> str:
-    """Save a baseline screenshot associated with the URL. Returns the hash key."""
+    """Save a baseline screenshot associated with the URL. Returns the hash key.
+
+    W10 integrity: every entry carries sha256 of the PNG; checks against a
+    baseline whose bytes no longer match the manifest FAIL with
+    BASELINE_INTEGRITY instead of silently diffing tampered truth.
+    """
     key = url_to_hash(url)
     path = BASELINES_DIR / f"{key}.png"
-    path.write_bytes(image_bytes)
+    _write_atomic(path, image_bytes)
     index = load_index()
     index["baselines"][key] = {
         "url": url.strip(),
         "path": str(path),
         "captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "description": description or "",
+        "sha256": hashlib.sha256(image_bytes).hexdigest(),
     }
     save_index(index)
     return key
 
 
+def baseline_integrity_report() -> dict:
+    """Startup/operator view of baseline truth integrity (W10)."""
+    idx = load_index() if INDEX_PATH.exists() else {"baselines": {}}
+    ok, corrupt, unmanifested = [], [], []
+    for key, entry in idx.get("baselines", {}).items():
+        url = entry.get("url", key)
+        path = Path(entry.get("path", BASELINES_DIR / f"{key}.png"))
+        want = entry.get("sha256")
+        if not path.exists():
+            corrupt.append({"url": url, "why": "file_missing"})
+        elif not want:
+            unmanifested.append(url)
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != want:
+            corrupt.append({"url": url, "why": "sha_mismatch"})
+        else:
+            ok.append(url)
+    return {"ok": len(ok), "corrupt": corrupt, "unmanifested": unmanifested}
+
+
+def _health_baseline_fields() -> dict:
+    try:
+        idx = load_index() if INDEX_PATH.exists() else {"baselines": {}}
+        return {"baselines_count": len(idx.get("baselines", {})),
+                "baseline_integrity": baseline_integrity_report()}
+    except CheckFailed as e:
+        return {"baselines_count": None, "baseline_integrity": {"error": e.code}}
+
+
 def load_baseline(url: str) -> Optional[dict]:
-    """Load stored baseline metadata (including image path and description) for a URL, or None if missing."""
+    """Load stored baseline metadata (including image_bytes) for a URL, or None if missing.
+
+    Raises CheckFailed(BASELINE_INTEGRITY) when a manifest hash disagrees with
+    the stored PNG — a corrupted/edited baseline must never quietly pass as
+    truth (W10). Pre-manifest entries (no sha256) load but are listed as
+    'unmanifested' in baseline_integrity_report().
+    """
     key = url_to_hash(url)
     index = load_index()
     entry = index.get("baselines", {}).get(key)
@@ -251,7 +305,13 @@ def load_baseline(url: str) -> Optional[dict]:
     path = Path(entry["path"])
     if not path.exists():
         return None
-    entry["image_bytes"] = path.read_bytes()
+    image_bytes = path.read_bytes()
+    want = entry.get("sha256")
+    if want and hashlib.sha256(image_bytes).hexdigest() != want:
+        raise CheckFailed("BASELINE_INTEGRITY",
+                          f"stored baseline PNG for {url.strip()} does not match its manifest hash; "
+                          "restore from backup and re-baseline deliberately.")
+    entry["image_bytes"] = image_bytes
     return entry
 
 
@@ -1259,7 +1319,12 @@ async def analyze(
 @app.get("/baselines")
 async def list_baselines():
     """List currently stored baselines."""
-    index = load_index()
+    try:
+        index = load_index()
+    except CheckFailed as e:
+        return JSONResponse(status_code=500,
+                            content={"error": "CHECK_FAILED", "error_code": e.code,
+                                     "detail": str(e)})
     return index
 
 
@@ -1286,7 +1351,7 @@ async def health():
         "ssrf_allowlist": sorted(_allowed_target_patterns()),
         "admin_auth": "enabled" if os.environ.get("MPW_ADMIN_TOKEN", "").strip() else "disabled",
         "playwright": "available" if _playwright_available() else "not installed (run: playwright install chromium)",
-        "baselines_count": len(load_index().get("baselines", {})),
+        **_health_baseline_fields(),
     }
 
 
