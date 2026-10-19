@@ -265,6 +265,29 @@ def save_baseline(url: str, image_bytes: bytes, description: Optional[str] = Non
     return key
 
 
+def gate_lockout_report() -> list:
+    """Self-lockout watchdog (Quinn regression 2026-10-19): baseline URLs the
+    effective S2 allowlist would refuse by NAME (no DNS, no network — /health
+    stays cheap). The first gate default refused 5 of 8 stored baselines
+    silently; a divergence between the gate and what the box monitors must
+    surface here, in the same field, forever."""
+    try:
+        idx = load_index() if INDEX_PATH.exists() else {"baselines": {}}
+    except CheckFailed:
+        return ["<index unreadable>"]
+    import fnmatch
+    import urllib.parse as _up
+    pats = _allowed_target_patterns()
+    locked = []
+    for entry in idx.get("baselines", {}).values():
+        u = entry.get("url", "")
+        host = (_up.urlparse(u if "://" in u else "https://" + u)
+                .hostname or "").lower().rstrip(".")
+        if not (host in pats or any(fnmatch.fnmatchcase(host, q) for q in pats)):
+            locked.append(u)
+    return locked
+
+
 def baseline_integrity_report() -> dict:
     """Startup/operator view of baseline truth integrity (W10)."""
     idx = load_index() if INDEX_PATH.exists() else {"baselines": {}}
@@ -288,7 +311,8 @@ def _health_baseline_fields() -> dict:
     try:
         idx = load_index() if INDEX_PATH.exists() else {"baselines": {}}
         return {"baselines_count": len(idx.get("baselines", {})),
-                "baseline_integrity": baseline_integrity_report()}
+                "baseline_integrity": baseline_integrity_report(),
+                "gate_lockout": gate_lockout_report()}
     except CheckFailed as e:
         return {"baselines_count": None, "baseline_integrity": {"error": e.code}}
 
@@ -743,7 +767,12 @@ _UNREACHABLE_PATTERNS = [
 def _allowed_target_patterns():
     raw = os.environ.get(
         "MPW_ALLOW_TARGETS",
-        "*.nellienet.win,127.0.0.1,localhost,::1")
+        # Self-lockout fix 2026-10-19 (Quinn regression): the first default
+        # covered only the nellienet lab hosts and silently refused 5 of the
+        # 8 stored baselines (all fhlb money-sites + amazon). The default
+        # MUST keep pace with what the box actually monitors; /health now
+        # publishes gate_lockout so the divergence can never be silent again.
+        "*.nellienet.win,127.0.0.1,localhost,::1,www.fhlb-of.com,www.amazon.com,example.com")
     return [q.strip().lower() for q in raw.split(",") if q.strip()]
 
 

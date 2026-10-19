@@ -98,3 +98,32 @@ def test_refusal_contract_on_the_socket(defaults):
         body = r.json()
         assert body["error_code"] == "TARGET_NOT_ALLOWED"
         assert body["status"] == "REJECTED"
+
+
+# --- Self-lockout regression (Quinn 2026-10-19): the gate shipped once with
+# a default that refused 5 of the 8 stored prod baselines. Permanent rows:
+PROD_BASELINE_HOSTS_AS_OF_2026_10_19 = [
+    "nastea.nellienet.win", "router.nellienet.win", "truebee.nellienet.win",
+    "www.fhlb-of.com", "www.amazon.com", "example.com",
+]
+
+
+def test_shipped_default_covers_every_prod_baseline_host(monkeypatch):
+    monkeypatch.delenv("MPW_ALLOW_TARGETS", raising=False)
+    for host in PROD_BASELINE_HOSTS_AS_OF_2026_10_19:
+        app_mod.check_target(f"https://{host}/")  # must not raise
+
+
+def test_gate_lockout_watchdog_reports_divergence(tmp_path, monkeypatch):
+    d = tmp_path / "baselines"; d.mkdir()
+    monkeypatch.setattr(app_mod, "BASELINES_DIR", d)
+    monkeypatch.setattr(app_mod, "INDEX_PATH", d / "index.json")
+    monkeypatch.setenv("MPW_ALLOW_TARGETS", "*.nellienet.win")
+    app_mod.save_baseline("https://ok.nellienet.win/", PNG1)
+    app_mod.save_baseline("https://www.fhlb-of.com/", PNG1)  # locked out
+    with TestClient(app_mod.app) as c:
+        h = c.get("/health").json()
+        assert h["gate_lockout"] == ["https://www.fhlb-of.com/"]
+
+
+PNG1 = b"\x89PNG\r\n\x1a\n" + b"0" * 32

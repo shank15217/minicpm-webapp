@@ -155,7 +155,16 @@ Do not expose :8000 publicly before S2/S2b close; LAN-only per house policy.
   the gate resolves, then the client re-resolves; a TTL flip between the
   two is not pinned (connection pinning would close it; deferred);
   (c) globbed name -> another ALLOWED LAN host is indistinguishable from
-  legitimate use — accepted for a LAN monitor. S1: MPW_ADMIN_TOKEN gates
+  legitimate use — accepted for a LAN monitor.   SELF-LOCKOUT INCIDENT 2026-10-19 (Quinn): the first shipped default
+  refused 5 of 8 stored prod baselines (fhlb x4 + amazon) — flagship-site
+  monitoring was down a day, silently, because gate refusals write no
+  run_history row. Closed three ways: default extended to cover every host
+  in the prod index as of that date; /health.gate_lockout publishes any
+  baseline the effective gate would refuse (the monitor now sees itself,
+  W11 taste real); permanent pin test_shipped_default_covers_every_prod_
+  baseline_host + watchdog test. Any future default change runs the gauntlet
+  of that pin.
+S1: MPW_ADMIN_TOKEN gates
   the only baseline-mutating path (capture_baseline; no delete endpoint
   exists as of this writing — any future mutation endpoint must share it).
 
