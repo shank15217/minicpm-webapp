@@ -962,6 +962,27 @@ LOADER_JS = """async () => {
         }
     }
     window.scrollTo(0, 0);
+    // Background images are NOT in document.images and img[loading=eager]
+    // does not cover them: lazy CSS backgrounds (hero/CTA sections) stayed
+    // unrendered-white in live captures of fhlb's Subscribe band even with
+    // the scroll passes. Enumerate computed background-image urls and
+    // force-load each through an Image() (onload/onerror both count as
+    // settled; bounded so a dead CDN degrades to the old behavior).
+    const urls = new Set();
+    document.querySelectorAll('*').forEach(el => {
+        const bg = getComputedStyle(el).backgroundImage;
+        if (bg && bg !== 'none') {
+            for (const m of bg.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g))
+                urls.add(m[1]);
+        }
+    });
+    await Promise.all([...urls].slice(0, 60).map(u => new Promise(res => {
+        const im = new Image();
+        im.onload = im.onerror = res;
+        im.src = u;
+        setTimeout(res, 8000);
+    })));
+    window.scrollTo(0, 0);
 }"""
 
 
