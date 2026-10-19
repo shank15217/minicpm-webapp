@@ -217,7 +217,11 @@ def init_run_db() -> None:
                          # RAW vector feeds alerts; ALIGNED vector is
                          # localization/tolerance only (guardrail §6.5).
                          ("det_band_sims", "TEXT"),
-                         ("det_aligned_band_sims", "TEXT")):
+                         ("det_aligned_band_sims", "TEXT"),
+                         # sanity-as-row-data (Quinn 2026-10-19): each row
+                         # carries its own blank-tail verdict; a poisoned
+                         # capture poisons only its own row, visibly.
+                         ("capture_sanity", "TEXT")):
             if col not in existing:
                 conn.execute(f"ALTER TABLE run_history ADD COLUMN {col} {typ}")
 
@@ -935,6 +939,54 @@ def classify_capture_error(exc: BaseException, url: str = "") -> str:
     return "CAPTURE_FAILED"
 
 
+# prescroll-4 loader procedure (Quinn FAIL 2026-10-19 15:4x): prescroll-1/2/3
+# measured scrollHeight ONCE and dwelled; lazy images only fetch when near
+# the viewport and the page's height GROWS during load, so a fixed loop
+# outruns the page and the tail captures as pure white (fhlb band5 0.3809
+# on BOTH rig and socket — systematic, not timing). Rules: force-eager every
+# lazy img, re-read scrollHeight each pass until stable (bounded), then
+# wait for image completion outside the JS. Shared verbatim with the
+# calibration rig (control_batch.py) — regime parity by single source.
+LOADER_JS = """async () => {
+    document.querySelectorAll('img[loading=lazy], [loading=lazy]')
+        .forEach(i => { i.loading = 'eager'; });
+    let prev = -1;
+    for (let pass = 0; pass < 4; pass++) {
+        const h = Math.max(document.body.scrollHeight,
+                           document.documentElement.scrollHeight);
+        if (h === prev) break;
+        prev = h;
+        for (let y = 0; y < h; y += 600) {
+            window.scrollTo(0, y);
+            await new Promise(r => setTimeout(r, 120));
+        }
+    }
+    window.scrollTo(0, 0);
+}"""
+
+
+def blank_tail_bands(png: bytes, frac_white: float = 0.90) -> list:
+    """Capture-sanity (Quinn ask 1): band windows whose sampled pixels are
+    >= frac_white near-white (>=250) — the blank-tail signature. Per-row
+    data, stamped on checks; capture_baseline REFUSES such captures too
+    (symmetric gating, ask 2) so the defect can never be pinned as truth.
+    Threshold is deliberately extreme: 90% of a 1244px band pure white is
+    unrendered content, not a minimalist homepage."""
+    import io as _io
+    from PIL import Image
+    im = Image.open(_io.BytesIO(png)).convert("L")
+    W, H = im.size
+    n = max(1, round(H / 1244.0))
+    out = []
+    for i in range(n):
+        y0, y1 = int(i * H / n), int((i + 1) * H / n)
+        sm = im.crop((0, y0, W, y1)).resize((32, 32))
+        px = list(sm.getdata())
+        if sum(1 for v in px if v >= 250) / len(px) >= frac_white:
+            out.append(f"{y0}-{y1}")
+    return out
+
+
 async def capture_screenshot(url: str, allow_insecure: bool = False):
     """Full-page screenshot via Playwright. Returns (png_bytes, tls_info).
 
@@ -988,22 +1040,13 @@ async def capture_screenshot(url: str, allow_insecure: bool = False):
                 # page to trigger lazy loaders, wait (best effort) for image
                 # completion, return to top, then capture.
                 try:
-                    await page.evaluate(
-                        """async () => {
-                            const h = document.body.scrollHeight;
-                            for (let y = 0; y < h; y += 600) {
-                                window.scrollTo(0, y);
-                                await new Promise(r => setTimeout(r, 120));
-                            }
-                            window.scrollTo(0, 0);
-                        }"""
-                    )
+                    await page.evaluate(LOADER_JS)
                     await page.wait_for_function(
                         "() => Array.from(document.images).every(i => i.complete)",
-                        timeout=15000)
+                        timeout=20000)
                 except Exception:
                     pass  # best effort: never fail a capture over lazy-load
-                await page.wait_for_timeout(400)
+                await page.wait_for_timeout(600)
                 return await page.screenshot(full_page=True, type="png")
             finally:
                 await browser.close()
@@ -1159,6 +1202,24 @@ async def analyze(
             )
         description = llm["content"]
 
+        # Symmetric baseline gating (Quinn ask 2, 2026-10-19): a baseline
+        # captured with a blank tail would PIN the defect as truth and
+        # hand every future diff a guaranteed false CHANGED. Refuse at the
+        # write path with a named code — same sanity check as the read side.
+        bl = blank_tail_bands(screenshot_bytes)
+        if bl:
+            await _record(url=url, mode=mode, status="CHECK_FAILED",
+                          error_code="BASELINE_BLANK_TAIL_REJECTED",
+                          capture_sanity=json.dumps({"blank_bands": bl}),
+                          elapsed_s=round(time.perf_counter() - start_time, 2))
+            return JSONResponse(
+                {"status": "CHECK_FAILED",
+                 "error_code": "BASELINE_BLANK_TAIL_REJECTED",
+                 "detail": f"capture has blank-rendered band(s) {bl}; "
+                           "baseline NOT written (a blank tail must never "
+                           "become truth). Re-run after the loader settles."},
+                status_code=502)
+
         key = save_baseline(url, screenshot_bytes, description=description)
         await _record(
             url=url, baseline_key=key,
@@ -1257,6 +1318,7 @@ async def analyze(
         screenshot_bytes = None
         det = None
         tls_info = {"verified": True, "error": None}
+        capture_sanity_json = None
         if do_visual:
             try:
                 screenshot_bytes, tls_info = await capture_screenshot(
@@ -1286,6 +1348,16 @@ async def analyze(
             if screenshot_bytes:
                 screenshot_data_url = image_to_base64(screenshot_bytes)
                 result["screenshot_captured"] = True
+                # sanity-as-row-data (Quinn ask 1): the row carries its own
+                # blank-tail verdict — a blank capture is visible per-row,
+                # not inferred from aggregates days later.
+                try:
+                    _bl = await anyio.to_thread.run_sync(
+                        functools.partial(blank_tail_bands, screenshot_bytes))
+                except Exception:
+                    _bl = []
+                capture_sanity_json = json.dumps({"blank_bands": _bl})
+                result["capture_sanity"] = {"blank_bands": _bl}
                 # v0.4 deterministic verdict layer: pure CPU, off the event
                 # loop. The pixel diff owns WHETHER something changed; the
                 # VLM must never answer same-or-different (QA-REPORT-5
@@ -1449,6 +1521,7 @@ async def analyze(
             det_aligned_band_sims=json.dumps(det.get("aligned_band_sims", [])) if det and not det.get("error") else None,
             verdict="site-updated" if site_updated else None,
             page_text_sha256=hashlib.sha256(page_text.encode()).hexdigest(),
+            capture_sanity=capture_sanity_json,
             elapsed_s=round(time.perf_counter() - start_time, 2),
         )
         result["visual_verification_used"] = bool(screenshot_data_url)

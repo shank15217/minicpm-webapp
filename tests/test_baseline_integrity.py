@@ -84,3 +84,24 @@ def test_health_boot_receipt_fields():
         h = c.get("/health").json()
         assert h["commit"] == want
         assert h["pid"] > 0 and h["started_at"].endswith("Z")
+
+
+def test_blank_tail_detector_and_loader():
+    """Quinn asks 1+3: sanity detector + loader procedure contract."""
+    import io as _io
+    from PIL import Image
+    # page: 1000px content + 1300px pure-white tail (unrendered band)
+    im = Image.new("RGB", (1280, 2300), (200, 60, 60))
+    for y in range(1000, 2300):
+        for x in range(0, 1280, 1):
+            im.putpixel((x, y), (255, 255, 255))
+    buf = _io.BytesIO(); im.save(buf, "PNG")
+    assert app_mod.blank_tail_bands(buf.getvalue()) != []
+    # fully-colored page: no blank bands (threshold must not fire on real content)
+    im2 = Image.new("RGB", (1280, 2300), (200, 60, 60))
+    buf2 = _io.BytesIO(); im2.save(buf2, "PNG")
+    assert app_mod.blank_tail_bands(buf2.getvalue()) == []
+    # loader contract: force-eager + re-measured height (no single-shot loop)
+    js = app_mod.LOADER_JS
+    assert "loading = 'eager'" in js
+    assert "scrollHeight" in js and "pass" in js.lower()
