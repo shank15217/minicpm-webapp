@@ -623,6 +623,16 @@ async def call_llama(messages: list, mode: str = "detail") -> dict:
         "max_tokens": 1200,
         "temperature": 0.2,
         "stream": False,
+        # Gemini item B -> LIVE defect (Quinn, amazon row 2026-10-19): the
+        # towers launch --reasoning on; a 1B model can loop in its thinking
+        # block and burn all 1,200 tokens before emitting narration ->
+        # LLAMA_TRUNCATED 502. Narration is literal single-image grounding,
+        # chain-of-thought adds nothing it needs. Measured on the live :8081
+        # tower: chat_template_kwargs.enable_thinking=false IS honored by
+        # the 4.7 template (86->26 tokens on a trivial probe; the
+        # {"thinking":false} spelling is NOT). max_tokens stays 1200 — the
+        # whole budget now goes to the answer.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
         resp = await _http.post(server_url, json=payload)

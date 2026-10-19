@@ -127,3 +127,31 @@ def test_gate_lockout_watchdog_reports_divergence(tmp_path, monkeypatch):
 
 
 PNG1 = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def test_narration_payload_disables_thinking():
+    """Gemini item B pin (wire-level): narration requests must carry
+    enable_thinking:false so a thinking-loop can't eat max_tokens again."""
+    import anyio
+    captured = {}
+
+    async def go():
+        import httpx
+        def handler(request):
+            captured.update(__import__("json").loads(request.content))
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "ok"},
+                             "finish_reason": "stop"}],
+                "model": "minicpm-v", "usage": {"total_tokens": 1}})
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        orig = app_mod._http
+        app_mod._http = client
+        try:
+            await app_mod.call_llama([{"role": "user", "content": "x"}], "detail")
+        finally:
+            app_mod._http = orig
+            await client.aclose()
+    anyio.run(go)
+    assert captured["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["max_tokens"] == 1200
