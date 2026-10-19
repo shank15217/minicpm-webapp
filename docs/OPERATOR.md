@@ -46,6 +46,20 @@ ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kil
 git fetch origin && git checkout -B main origin/main
 nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
 curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
+
+> **BASELINE RE-CAPTURE — SUSPENDED (2026-10-19).** Do NOT re-capture
+> `fhlb` or `amazon` baselines until the post-restart re-check says
+> something true. Three capture-regime defects were found this date and
+> each poisoned "site changed" readings: un-scrolled full-page captures
+> (lazy sections render white, W12), bare-UA rig drift, and the route
+> guard defacing multi-CDN pages (guard now splits documents/subresources,
+> `779312d`). The stored baselines are probably still true; burning them
+> under a defective regime pins garbage as truth. Re-check order after
+> restart: boot receipt -> fhlb/amazon check rows -> only then any
+> re-capture decision. The calibration cohort is quarantined to regime
+> `prescroll-3` (all 88 legacy rows excluded by regime_filter.py equality;
+> first clean rows 12:00 UTC) — nothing is "calibrated" until new-regime
+> rows accumulate across diurnal windows (earliest graduation ~Oct 21).
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
 ```
 Ping-pong any surprise to the room with the test ID (U1) — Quinn health-gates
