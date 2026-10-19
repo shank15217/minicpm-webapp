@@ -958,7 +958,26 @@ LOADER_JS = r"""async () => {
         prev = h;
         for (let y = 0; y < h; y += 600) {
             window.scrollTo(0, y);
+            window.dispatchEvent(new Event('scroll'));  // WOW.js binds scroll;
+            document.dispatchEvent(new Event('scroll')); // raw jumps can miss it
             await new Promise(r => setTimeout(r, 120));
+        }
+    }
+    window.scrollTo(0, 0);
+    // Phase 3 - reveal libraries (WOW.js & family, AOS [data-aos]) keep
+    // sections at visibility:hidden until their own scroll handlers fire; raw
+    // scrollTo jumps can be missed entirely, and fhlb's dark Subscribe CTA
+    // (class="container text-center wow fadeIn") was captured white for this
+    // reason. Last resort: force-reveal any still-hidden reveal-classed
+    // element, settled at final frame, so the shot shows the server-sent page.
+    for (const el of document.querySelectorAll('.wow, [data-aos]')) {
+        const cs = getComputedStyle(el);
+        if (cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) {
+            el.classList.add('animated', 'fadeIn');   // WOW's own shown idiom
+            el.style.visibility = 'visible';
+            el.style.opacity = '1';
+            el.style.animationName = 'none';
+            el.setAttribute('data-aos-animate', 'true'); // AOS idiom
         }
     }
     window.scrollTo(0, 0);
