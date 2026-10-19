@@ -48,6 +48,10 @@ BASELINES_DIR = Path(os.getenv("BASELINES_DIR", "baselines"))
 BASELINES_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_PATH = BASELINES_DIR / "index.json"
 
+# Release version — bump at tag-at-ship (v0.5.0: SSRF+S1 gates, W10+D,
+# named-refusal contract). Disclosed in /health so socket answers version.
+VERSION = "0.5.0"
+
 # Two vision towers. Orientation is MEASURED, not inferred from filenames —
 # the "-4x" file is the HIGH-detail one (scale_factor=2 => 4x downsample =>
 # 256 tokens/tile); plain f16 is scale_factor=4 (16x downsample => 64
@@ -919,8 +923,17 @@ async def analyze(
     visual_verify: whether to capture a live screenshot for comparison.
     """
     # S2 entry gate (per-hop guards still carry the rest of the load).
+    # Sammy defect 2026-10-19: this raised uncaught -> bare Starlette 500
+    # "Internal Server Error". Security held (no fetch happened) but the
+    # named-code contract did not. Refusals are policy rejections of the
+    # REQUEST, not check failures: 403 + named error_code, JSON.
     if url:
-        check_target(url)
+        try:
+            check_target(url)
+        except CheckFailed as e:
+            return JSONResponse(
+                {"status": "REJECTED", "error_code": e.code, "error": str(e)},
+                status_code=403)
     # S1: baseline WRITE gate. capture_baseline is the ONLY baseline-mutating
     # path in this app (endpoints: /, /analyze, /baselines GET, /health —
     # measured 2026-10-19; there is no delete endpoint; if one is added it
@@ -1345,6 +1358,7 @@ async def health():
 
     r_fast, r_detail = await asyncio.gather(check(LLAMA_SERVER_FAST), check(LLAMA_SERVER_DETAIL))
     return {
+        "version": VERSION,
         "fast": r_fast,        # f16 @ :8080 (legacy key "16x")
         "detail": r_detail,    # -4x @ :8081 (legacy key "4x")
         "16x": r_fast, "4x": r_detail,   # deprecated aliases, file-truth

@@ -88,3 +88,13 @@ def test_read_paths_stay_open():
     with TestClient(app_mod.app) as c:
         assert c.get("/health").status_code == 200
         assert c.get("/baselines").status_code == 200
+
+
+def test_refusal_contract_on_the_socket(defaults):
+    """Sammy defect pin: entry-gate refusals are named JSON, never bare 500."""
+    with TestClient(app_mod.app) as c:
+        r = c.post("/analyze", data={"url": "http://169.254.169.254/latest/meta-data/"})
+        assert r.status_code == 403
+        body = r.json()
+        assert body["error_code"] == "TARGET_NOT_ALLOWED"
+        assert body["status"] == "REJECTED"
