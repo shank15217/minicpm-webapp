@@ -164,6 +164,21 @@ Do not expose :8000 publicly before S2/S2b close; LAN-only per house policy.
   W11 taste real); permanent pin test_shipped_default_covers_every_prod_
   baseline_host + watchdog test. Any future default change runs the gauntlet
   of that pin.
+  POLICY SPLIT 2026-10-19 (parity experiment, W12 follow-on): applying the
+  strict allowlist to SUBRESOURCES self-defaced multi-CDN sites — guarded
+  governance/board-directors captured at 0.1364 (dh -1648) vs 0.8906 dh 0
+  unguarded; amazon 0.36 guarded vs 0.78 unguarded. Two prior 'site
+  updated' calls (amazon's W8 entry, part of governance) were THIS: the
+  baseline day predated the gate, the check day blocked the page's own CDN.
+  Playwright route now splits by request class: documents keep the full
+  allowlist per-hop check; subresources allow public names and refuse only
+  schemes, IP-literals of the metadata class, dotless/.internal/.localhost
+  names (loopback + private LAN literals allowed, named). Strong SSRF
+  surface (url param + httpx redirects) unchanged. Control-batch rig
+  mirrors the same split (capture_regime prescroll-2; rig rows without a
+  regime stamp are quarantined by scripts/regime_filter.py — 80/80 legacy
+  cohort rows currently excluded; re-collect under prescroll before any
+  graduation).
 S1: MPW_ADMIN_TOKEN gates
   the only baseline-mutating path (capture_baseline; no delete endpoint
   exists as of this writing — any future mutation endpoint must share it).

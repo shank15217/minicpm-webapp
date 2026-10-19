@@ -865,12 +865,53 @@ async def _ssrf_httpx_hook(request):
     check_target(str(request.url))
 
 
-async def _ssrf_playwright_route(route):
-    """Playwright-side name-class gate: default-deny subresources +
-    IP-literals + always-refused metadata hosts; resolved-IP rebinding is
-    NOT covered here (RUNBOOK residual — route sees names, not answers)."""
+def check_subresource(url: str):
+    """Subresource policy (measured correction 2026-10-19): the strict
+    host-allowlist on SUBRESOURCES broke multi-CDN sites — guarded captures
+    of governance/board-directors scored 0.1364 (dh -1648) vs 0.8906 dh 0
+    unguarded: the page is allowed, its CDN isn't, so the browser renders a
+    broken half-page and the diff screams. That is not safety, it is
+    self-defacement by policy. Subresource rule: http(s) only; refuse
+    IP-literals and the metadata class (names AND answers), and refuse
+    dotless hosts; ALLOW public names regardless of the monitor allowlist —
+    the strong SSRF surface (url param + redirects) stays covered by
+    check_target at the top level and the per-hop httpx hook. Residual,
+    named: a malicious allowed page could reference public URLs; that is
+    the page's own risk, not the monitor's threat model here."""
+    import ipaddress
+    import urllib.parse as _up
+    u = _up.urlparse(url if "://" in url else "https://" + url)
+    if u.scheme not in ("http", "https"):
+        raise CheckFailed("TARGET_NOT_ALLOWED", f"subresource scheme {u.scheme!r}")
+    host = (u.hostname or "").lower().rstrip(".")
+    if not host:
+        raise CheckFailed("TARGET_NOT_ALLOWED", "subresource without host")
     try:
-        check_target(route.request.url)
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if ip.is_loopback:
+            return  # LAN fixtures legitimately inline local assets
+        if ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+            raise CheckFailed("TARGET_NOT_ALLOWED", f"subresource metadata-class IP {host}")
+        return  # private/LAN literals: LAN monitor, allowed (named)
+    if "." not in host:
+        raise CheckFailed("TARGET_NOT_ALLOWED", f"subresource dotless host {host!r}")
+    if host == "metadata" or host.endswith(".internal") or host.endswith(".localhost"):
+        raise CheckFailed("TARGET_NOT_ALLOWED", f"subresource metadata-class name {host}")
+
+
+async def _ssrf_playwright_route(route):
+    """Playwright-side gate, split by request class: documents carry the
+    full allowlist check (redirects included); subresources carry the
+    weaker metadata-class check so monitored pages render honestly."""
+    url = route.request.url
+    try:
+        if route.request.resource_type == "document":
+            check_target(url)
+        else:
+            check_subresource(url)
     except CheckFailed:
         await route.abort()
         return

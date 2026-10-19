@@ -155,3 +155,39 @@ def test_narration_payload_disables_thinking():
     anyio.run(go)
     assert captured["chat_template_kwargs"] == {"enable_thinking": False}
     assert captured["max_tokens"] == 1200
+
+
+class _Req:
+    def __init__(self, url, rtype): self.url, self.resource_type = url, rtype
+
+
+class _Route:
+    def __init__(self, url, rtype="image"):
+        self.request = _Req(url, rtype); self.aborted = self.continued = False
+    async def abort(self): self.aborted = True
+    async def continue_(self): self.continued = True
+
+
+def test_subresource_policy_split(defaults):
+    """Multi-CDN correction: documents strict, subresources metadata-only."""
+    import anyio
+
+    async def go():
+        # public CDN host NOT in allowlist: document refused, subresource OK
+        r1 = _Route("https://cdn.somecdn.net/logo.png", "image")
+        await app_mod._ssrf_playwright_route(r1)
+        assert r1.continued and not r1.aborted
+        r2 = _Route("https://cdn.somecdn.net/page", "document")
+        await app_mod._ssrf_playwright_route(r2)
+        assert r2.aborted
+        # metadata class still dies even as subresource
+        for bad in ("http://169.254.169.254/x", "http://metadata.google.internal/y",
+                    "file:///etc/passwd"):
+            r3 = _Route(bad, "image")
+            await app_mod._ssrf_playwright_route(r3)
+            assert r3.aborted, bad
+        # loopback subresources (LAN fixtures) pass
+        r4 = _Route("http://127.0.0.1:8081/asset.css", "stylesheet")
+        await app_mod._ssrf_playwright_route(r4)
+        assert r4.continued
+    anyio.run(go)
