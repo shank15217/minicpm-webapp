@@ -102,13 +102,13 @@ tower/mode contract: [docs/DEPLOY.md](docs/DEPLOY.md). Calibration doctrine:
 ### 1. Start the two llama-server instances
 
 Port/mode pairing **matches the app defaults** — do not cross them
-(`mode=detail` requests go to `:8080`; launching the `-4x` tower there
+(`mode=fast` requests go to `:8080`, `mode=detail` to `:8081`; launching the `-4x` tower there
 silently degrades detail-mode checks — an earlier revision of this README
 suggested exactly that, which is how the labels got trusted over the
 physics):
 
 ```bash
-# detail — full-resolution f16 tower — port 8080  (default mode)
+# FAST/general — f16 tower (64 tok/tile) — port 8080  [mode=fast]
 /AITOOLCHAIN/llama.cpp/build/bin/llama-server \
   -m /AITOOLCHAIN/models/MiniCPM-V-4.7/MiniCPM-V-4_7-1B-Q8_0.gguf \
   --mmproj /AITOOLCHAIN/models/MiniCPM-V-4.7/mmproj-model-f16.gguf \
@@ -121,7 +121,7 @@ physics):
   --host 0.0.0.0 \
   -lv 4
 
-# fast — token-saving -4x tower — port 8081
+# DETAIL/OCR — -4x tower (256 tok/tile) — port 8081  [mode=detail]
 /AITOOLCHAIN/llama.cpp/build/bin/llama-server \
   -m /AITOOLCHAIN/models/MiniCPM-V-4.7/MiniCPM-V-4_7-1B-Q8_0.gguf \
   --mmproj /AITOOLCHAIN/models/MiniCPM-V-4.7/mmproj-model-f16-4x.gguf \
@@ -187,8 +187,10 @@ resets every comparison, profile, and attestation to zero.
 ### Environment variables
 
 ```bash
-LLAMA_SERVER_16X   # default http://127.0.0.1:8080/v1/chat/completions — detail (f16) tower
-LLAMA_SERVER_4X    # default http://127.0.0.1:8081/v1/chat/completions — fast (-4x) tower
+LLAMA_SERVER_FAST  # default http://127.0.0.1:8080/v1/chat/completions — fast (f16) tower
+LLAMA_SERVER_16X   # deprecated alias of FAST (same endpoint)
+LLAMA_SERVER_DETAIL # default http://127.0.0.1:8081/v1/chat/completions — detail (-4x) tower
+LLAMA_SERVER_4X     # deprecated alias of DETAIL (same endpoint)
 ```
 
 Defaults match the launch commands above; set them only when the towers run
