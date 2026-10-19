@@ -237,6 +237,26 @@ objection, accepted into the ledger without argument.)*
   operator's call; until installed, single-copy remains TRUE — detection,
   not durability.
 
+W12 **Full-page capture missed lazy-loaded content (fixed 2026-10-19).**
+The fhlb `page_sim 0.3809, 6/6 bands` alarm was NOT a site restructure and
+not defacement: `full_page` screenshots do not scroll, so below-the-fold
+`loading=lazy` sections never triggered and rendered as PURE WHITE in the
+live shot (band y6219+ luma 255.0 vs baseline 61.8). Baselines captured on
+a lucky-passing load vs checks on an unlucky one differ by ~0.5 page_sim
+with the site visually identical — exactly the "looks the same to me"
+report. Fix: pre-scroll the full height (600px steps, 120ms dwell), return
+to top, wait best-effort for `img.complete`, then capture. Verified on
+prod hardware (code copied to the box, prod app.py untouched, restored):
+two consecutive fixed-regime captures score bands [~0.78, 0.995, 0.984,
+0.984, 0.922, **1.0**] against the SAME baseline — the 0-white band is
+gone; the only run-to-run movement left is band 0 (0.78 vs 0.80), which is
+the genuinely rotating hero and belongs to W2/W3, not a capture defect.
+Consequence: the "fhlb needs re-baseline (W8)" claim from the same day is
+RETRACTED pending a post-fix re-check — the stored baseline is likely
+still true; do not burn it on a defect. *(User's 'it looks visually the
+same' beat three instruments' inference; capture-regime parity is now a
+reviewed property.)*
+
 W11 **v0.4.3 monitors nothing by itself.** No scheduler, no alert path, no
 retention policy: "monitoring" means someone POSTs `/analyze` and reads JSON.
 Until you add your own cron (or the v0.5 scheduler exists), **nothing is

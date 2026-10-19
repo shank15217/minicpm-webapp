@@ -937,6 +937,32 @@ async def capture_screenshot(url: str, allow_insecure: bool = False):
                 await page.route("**/*", _ssrf_playwright_route)
                 await page.goto(url, wait_until="load", timeout=60000)
                 await page.wait_for_timeout(2500)
+                # Capture-regime fix (fhlb 0.3809 investigation 2026-10-19):
+                # below-the-fold lazy-loaded sections render as PURE WHITE
+                # unless scrolled into view; baseline (Oct-17) caught the
+                # lucky load, later checks caught unlucky ones — page_sim
+                # between the SAME baseline and SAME site ranged 0.38..0.99
+                # (band y6219-6841 luma 255.0 vs 61.8 across runs). Humans
+                # scroll; full_page screenshots don't. Pre-scroll the whole
+                # page to trigger lazy loaders, wait (best effort) for image
+                # completion, return to top, then capture.
+                try:
+                    await page.evaluate(
+                        """async () => {
+                            const h = document.body.scrollHeight;
+                            for (let y = 0; y < h; y += 600) {
+                                window.scrollTo(0, y);
+                                await new Promise(r => setTimeout(r, 120));
+                            }
+                            window.scrollTo(0, 0);
+                        }"""
+                    )
+                    await page.wait_for_function(
+                        "() => Array.from(document.images).every(i => i.complete)",
+                        timeout=15000)
+                except Exception:
+                    pass  # best effort: never fail a capture over lazy-load
+                await page.wait_for_timeout(400)
                 return await page.screenshot(full_page=True, type="png")
             finally:
                 await browser.close()
