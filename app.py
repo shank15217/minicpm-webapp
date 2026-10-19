@@ -947,7 +947,7 @@ def classify_capture_error(exc: BaseException, url: str = "") -> str:
 # lazy img, re-read scrollHeight each pass until stable (bounded), then
 # wait for image completion outside the JS. Shared verbatim with the
 # calibration rig (control_batch.py) — regime parity by single source.
-LOADER_JS = """async () => {
+LOADER_JS = r"""async () => {
     document.querySelectorAll('img[loading=lazy], [loading=lazy]')
         .forEach(i => { i.loading = 'eager'; });
     let prev = -1;
