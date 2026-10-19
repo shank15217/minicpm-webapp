@@ -16,7 +16,7 @@ from typing import Optional
 import anyio
 import detdiff
 import httpx
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Request, FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -28,7 +28,8 @@ async def lifespan(app: FastAPI):
     module import — survives TestClient/per-test-loop usage (Sammy finding 2)."""
     global _http
     _http = httpx.AsyncClient(
-        timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True
+        timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True,
+        event_hooks={"request": [_ssrf_httpx_hook]},
     )
     init_run_db()
     try:
@@ -576,6 +577,7 @@ async def _chromium_page_text(url: str):
             browser = await pw.chromium.launch()
             try:
                 page = await browser.new_page()
+                await page.route("**/*", _ssrf_playwright_route)
                 await page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 return await page.evaluate(
                     "document.body ? document.body.innerText : ''")
@@ -599,6 +601,8 @@ async def fetch_page_text(url: str) -> str:
         )
         resp.raise_for_status()
         text = resp.text
+    except CheckFailed:
+        raise  # gate verdicts (TARGET_NOT_ALLOWED) are not reclassified
     except Exception as e:
         code = classify_capture_error(e, url)
         if code.startswith("SSL_"):
@@ -649,6 +653,102 @@ _UNREACHABLE_PATTERNS = [
       "internet_disconnected", "network changed", "network_changed",
       "err_address_unreachable", "no route to host"), "NETWORK_UNREACHABLE"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# S2/S2b SSRF gate (v0.3, external review 2026-10-19; Quinn resolved-IP pin).
+# Default-deny host allowlist MPW_ALLOW_TARGETS (comma-separated host globs).
+# Rules, in order:
+#   1. refused ALWAYS (even verbatim): link-local/unspecified/multicast IPs —
+#      the cloud-metadata class. Non-overridable.
+#   2. IP literals must appear VERBATIM in the allowlist; globs never match
+#      IPs, so no raw internal address rides in on a '*.x' pattern.
+#   3. GLOB-matched hostnames are RESOLVED and refused if any answer is
+#      loopback/link-local/etc: `evil.nellienet.win -> 127.0.0.1` is the
+#      DNS-rebinding shape, and a wildcard name may not point at loopback.
+#      (Private/LAN ranges stay allowed through globs — this is a LAN monitor;
+#      within-LAN rebinding is a named residual in RUNBOOK, as is the
+#      check->connect re-resolution TOCTOU window and the fact that the
+#      Playwright route guard sees NAMES, not resolved IPs: its coverage is
+#      default-deny for subresources + IP-literal refusal, not rebinding.)
+#   4. verbatim-named hosts pass (127.0.0.1/localhost fixtures, towers).
+# Per-hop enforcement: httpx request hook fires on every redirect hop;
+# Playwright layers install page.route abort-on-refused for all subrequests.
+
+
+def _allowed_target_patterns():
+    raw = os.environ.get(
+        "MPW_ALLOW_TARGETS",
+        "*.nellienet.win,127.0.0.1,localhost,::1")
+    return [q.strip().lower() for q in raw.split(",") if q.strip()]
+
+
+def _ip_of(x):
+    import ipaddress
+    try:
+        return ipaddress.ip_address(x)
+    except ValueError:
+        return None
+
+
+def check_target(url: str):
+    import fnmatch
+    import socket
+    import urllib.parse as _up
+    host = (_up.urlparse(url if "://" in url else "https://" + url)
+            .hostname or "").lower().rstrip(".")
+    pats = _allowed_target_patterns()
+    verbatim = host in pats
+    globbed = not verbatim and any(fnmatch.fnmatchcase(host, q) for q in pats)
+    if not (verbatim or globbed):
+        raise CheckFailed(
+            "TARGET_NOT_ALLOWED",
+            f"{url}: host not in MPW_ALLOW_TARGETS (S2 SSRF gate)")
+    ip = _ip_of(host)
+    if ip is not None:
+        if ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+            raise CheckFailed(
+                "TARGET_NOT_ALLOWED",
+                f"{host} is metadata-class and unconditionally refused (S2)")
+        return  # IP literal matched verbatim
+    if globbed:
+        try:
+            answers = {a[4][0] for a in socket.getaddrinfo(host, None)}
+        except socket.gaierror:
+            return  # DNS death is the capture classifier's job, not ours
+        for a in answers:
+            rip = _ip_of(a)
+            if rip is None:
+                continue
+            if rip.is_link_local or rip.is_unspecified or rip.is_multicast:
+                raise CheckFailed(
+                    "TARGET_NOT_ALLOWED",
+                    f"{host} resolves to metadata-class {a}; refused "
+                    f"even by wildcard (rebinding shape, S2)")
+            if rip.is_loopback:
+                raise CheckFailed(
+                    "TARGET_NOT_ALLOWED",
+                    f"{host} resolves to loopback {a}; wildcard names may "
+                    f"not point at loopback (Quinn resolved-IP pin, S2)")
+        return
+    return  # verbatim hostname (localhost etc.)
+
+
+async def _ssrf_httpx_hook(request):
+    """PER-HOP (S2b): httpx fires request hooks on EVERY redirect hop."""
+    check_target(str(request.url))
+
+
+async def _ssrf_playwright_route(route):
+    """Playwright-side name-class gate: default-deny subresources +
+    IP-literals + always-refused metadata hosts; resolved-IP rebinding is
+    NOT covered here (RUNBOOK residual — route sees names, not answers)."""
+    try:
+        check_target(route.request.url)
+    except CheckFailed:
+        await route.abort()
+        return
+    await route.continue_()
 
 
 def classify_capture_error(exc: BaseException, url: str = "") -> str:
@@ -708,6 +808,7 @@ async def capture_screenshot(url: str, allow_insecure: bool = False):
                 )
                 page = await context.new_page()
                 # load is more reliable than networkidle on busy / protected sites
+                await page.route("**/*", _ssrf_playwright_route)
                 await page.goto(url, wait_until="load", timeout=60000)
                 await page.wait_for_timeout(2500)
                 return await page.screenshot(full_page=True, type="png")
@@ -740,6 +841,7 @@ async def root():
 
 @app.post("/analyze")
 async def analyze(
+    request: Request,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     prompt: Optional[str] = Form(None),
@@ -756,6 +858,21 @@ async def analyze(
           legacy aliases "16x"->fast, "4x"->detail (file truth, 2026-10-17).
     visual_verify: whether to capture a live screenshot for comparison.
     """
+    # S2 entry gate (per-hop guards still carry the rest of the load).
+    if url:
+        check_target(url)
+    # S1: baseline WRITE gate. capture_baseline is the ONLY baseline-mutating
+    # path in this app (endpoints: /, /analyze, /baselines GET, /health —
+    # measured 2026-10-19; there is no delete endpoint; if one is added it
+    # must share this token). Enabled by setting MPW_ADMIN_TOKEN; unset keeps
+    # lab behavior with health disclosure.
+    if (capture_baseline or "").lower() == "true":
+        _tok = os.environ.get("MPW_ADMIN_TOKEN", "").strip()
+        if _tok and request.headers.get("x-admin-token", "") != _tok:
+            return JSONResponse(
+                {"status": "CHECK_FAILED", "error_code": "ADMIN_TOKEN_REQUIRED",
+                 "error": "baseline capture requires the X-Admin-Token header"},
+                status_code=401)
     mode = (mode or "detail").lower()
     # Semantic names preferred; `16x`/`4x` accepted as deprecated aliases.
     mode = MODE_ALIASES.get(mode, "detail")
@@ -1166,6 +1283,8 @@ async def health():
         "fast": r_fast,        # f16 @ :8080 (legacy key "16x")
         "detail": r_detail,    # -4x @ :8081 (legacy key "4x")
         "16x": r_fast, "4x": r_detail,   # deprecated aliases, file-truth
+        "ssrf_allowlist": sorted(_allowed_target_patterns()),
+        "admin_auth": "enabled" if os.environ.get("MPW_ADMIN_TOKEN", "").strip() else "disabled",
         "playwright": "available" if _playwright_available() else "not installed (run: playwright install chromium)",
         "baselines_count": len(load_index().get("baselines", {})),
     }

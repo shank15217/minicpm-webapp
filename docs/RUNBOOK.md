@@ -146,6 +146,18 @@ overwrite without confirm/auth, S2 SSRF (url param reaches internal hosts),
 S2b redirect-SSRF, S4 structured score + verdict-derivation (v0.5 contract),
 each xfail-marked and gate-visible — this is disclosure, not hidden debt.
 Do not expose :8000 publicly before S2/S2b close; LAN-only per house policy.
+  STATUS 2026-10-19: S2/S2b CLOSED (allowlist gate, per-hop httpx hook +
+  Playwright route guard; pins in tests/test_ssrf_gate.py) with NAMED
+  residuals: (a) resolved-IP enforcement (rebinding: wildcard name ->
+  loopback/metadata) is httpx-side per-hop only; the Playwright route guard
+  sees names, not resolved answers — Chromium-side rebinding is residual,
+  mitigated there only by default-deny + IP-literal refusal; (b) TOCTOU:
+  the gate resolves, then the client re-resolves; a TTL flip between the
+  two is not pinned (connection pinning would close it; deferred);
+  (c) globbed name -> another ALLOWED LAN host is indistinguishable from
+  legitimate use — accepted for a LAN monitor. S1: MPW_ADMIN_TOKEN gates
+  the only baseline-mutating path (capture_baseline; no delete endpoint
+  exists as of this writing — any future mutation endpoint must share it).
 
 W5b **v0.3 scope accepted: no-baseline failure-mode transition signal
 (Sammy, 2026-10-18).** Targets that never graduated can never alert under
