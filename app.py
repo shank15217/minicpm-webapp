@@ -52,6 +52,29 @@ INDEX_PATH = BASELINES_DIR / "index.json"
 # named-refusal contract). Disclosed in /health so socket answers version.
 VERSION = "0.5.0"
 
+
+# Quinn 2026-10-19: VERSION alone is a HEAD-lie — a process booted 9 min
+# before the fix commit still reports the tag the fix rides. These fields
+# are captured at process START and answer "is this restart mine?" from the
+# socket alone: commit = git HEAD of the app dir at boot (the OPERATOR ritual
+# checks out disk before boot, so boot-HEAD = code loaded; a post-boot
+# checkout is the named residual); pid + started_at let `ss -tlnp` checks be
+# cross-read without ssh.
+def _boot_commit() -> str:
+    try:
+        import subprocess
+        r = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent),
+                            "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+BOOT_COMMIT = _boot_commit()
+BOOT_PID = os.getpid()
+BOOTED_AT = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
 # Two vision towers. Orientation is MEASURED, not inferred from filenames —
 # the "-4x" file is the HIGH-detail one (scale_factor=2 => 4x downsample =>
 # 256 tokens/tile); plain f16 is scale_factor=4 (16x downsample => 64
@@ -1398,6 +1421,7 @@ async def health():
     r_fast, r_detail = await asyncio.gather(check(LLAMA_SERVER_FAST), check(LLAMA_SERVER_DETAIL))
     return {
         "version": VERSION,
+        "commit": BOOT_COMMIT, "pid": BOOT_PID, "started_at": BOOTED_AT,
         "fast": r_fast,        # f16 @ :8080 (legacy key "16x")
         "detail": r_detail,    # -4x @ :8081 (legacy key "4x")
         "16x": r_fast, "4x": r_detail,   # deprecated aliases, file-truth

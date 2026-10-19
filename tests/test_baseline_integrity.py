@@ -71,3 +71,16 @@ def test_integrity_report_and_health(sandbox):
         h2 = c.get("/health").json()
         assert h2["baseline_integrity"]["error"] == "INDEX_CORRUPT"
         assert c.get("/baselines").json()["error_code"] == "INDEX_CORRUPT"
+
+
+def test_health_boot_receipt_fields():
+    """Quinn HEAD-lie pin: /health answers 'which boot am I?' from the socket."""
+    import subprocess
+    from pathlib import Path
+    want = subprocess.run(["git", "-C", str(Path(app_mod.__file__).parent),
+                           "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    with TestClient(app_mod.app) as c:
+        h = c.get("/health").json()
+        assert h["commit"] == want
+        assert h["pid"] > 0 and h["started_at"].endswith("Z")
