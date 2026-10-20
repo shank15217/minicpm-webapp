@@ -25,8 +25,9 @@ fhlb baseline.
 """
 from __future__ import annotations
 
+import base64
 import io
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 BAND_H = 1280
 BAND_OVERLAP = 64
@@ -147,3 +148,48 @@ def page_diff(baseline_bytes: bytes, live_bytes: bytes,
         "height_delta_px": b.size[1] - a.size[1],
         "algorithm": "dhash64+mae256/min-per-band, min-over-bands",
     }
+
+
+def block_mae_sig(a_bytes: bytes, b_bytes: bytes, size: int = 64) -> dict:
+    """Shadow metric (spatial-noise-ceiling fit, Oct-20): per-block mean
+    absolute luma error on the overlap region, page coordinates. Global
+    band scalars dilute localized edits (a 200x40 wire-number swap is
+    ~0.005 of a 1280x1280 band — W1 blind spot, external review E); a
+    per-block ceiling learned from the cohort needs the per-block grid.
+    One byte per block (quantized mae*255) base64'd — a fhlb-tall page is
+    ~20x117 blocks ~= 3.2 KB per row, cohort-sized. Shadow only: this
+    MUST NOT feed any verdict until the Oct-21 fit (Sammy's
+    anti-ratchet rules + Quinn's exceedance harness)."""
+    ia = Image.open(io.BytesIO(a_bytes)).convert("L")
+    ib = Image.open(io.BytesIO(b_bytes)).convert("L")
+    if ia.width != 1280:
+        ia = ia.resize((1280, int(ia.height * 1280 / ia.width)))
+    if ib.width != 1280:
+        ib = ib.resize((1280, int(ib.height * 1280 / ib.width)))
+    rows = min(ia.height, ib.height) // size
+    cols = 1280 // size
+    diff = ImageChops.difference(ia, ib)
+    vals = bytearray(rows * cols)
+    for by in range(rows):
+        for bx in range(cols):
+            block = diff.crop((bx * size, by * size,
+                               (bx + 1) * size, (by + 1) * size))
+            st = ImageStat.Stat(block)
+            vals[by * cols + bx] = min(255, int(round(st.mean[0])))
+    return {"size": size, "cols": cols, "rows": rows,
+            "b64": base64.b64encode(bytes(vals)).decode()}
+
+
+def block_mae_shadow(a_bytes: bytes, b_bytes: bytes) -> dict:
+    """Compact shadow payload for cohort rows (Oct-20 schema ask): full grid
+    at 64px + top-64 blocks at 16px with page coords + the censoring floor
+    (value of the 64th block = every omitted 16px block is <= this, which
+    is right-censored data, standard for ceiling fitting). ~4 KB/row."""
+    fine = block_mae_sig(a_bytes, b_bytes, size=16)
+    fv = list(base64.b64decode(fine["b64"]))
+    cols = fine["cols"]
+    order = sorted(range(len(fv)), key=lambda i: fv[i], reverse=True)[:64]
+    top = [[i % cols, i // cols, fv[i]] for i in order]
+    floor16 = fv[order[-1]] if len(order) == 64 else 0
+    coarse = block_mae_sig(a_bytes, b_bytes, size=64)
+    return {"g64": coarse, "t16": top, "floor16": floor16}
