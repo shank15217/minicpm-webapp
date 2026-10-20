@@ -193,3 +193,56 @@ def block_mae_shadow(a_bytes: bytes, b_bytes: bytes) -> dict:
     floor16 = fv[order[-1]] if len(order) == 64 else 0
     coarse = block_mae_sig(a_bytes, b_bytes, size=64)
     return {"g64": coarse, "t16": top, "floor16": floor16}
+
+
+def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
+    """Per-block mean luma (1 byte/block, b64) — the schema answer to the
+    persistence clause (Oct-20, Sammy/Quinn): unsigned |MAE| vs the
+    baseline cannot express sign, so slow same-direction edits are
+    invisible to it. Store the live block MEAN instead and derive
+    everything downstream:
+      * baseline↔live |delta| = |live_mean - baseline_mean| (cache the
+        baseline's grid once per pin — it is a constant) -> ceilings;
+      * live↔live SIGNED delta between consecutive rows =
+        live_mean(t) - live_mean(t-1) -> persistence events.
+    Same storage as today (~3 KB/tall page), strictly more information."""
+    ia = Image.open(io.BytesIO(a_bytes)).convert("L")
+    if ia.width != 1280:
+        ia = ia.resize((1280, int(ia.height * 1280 / ia.width)))
+    rows, cols = ia.height // size, 1280 // size
+    vals = bytearray(rows * cols)
+    for by in range(rows):
+        for bx in range(cols):
+            block = ia.crop((bx * size, by * size, (bx + 1) * size, (by + 1) * size))
+            vals[by * cols + bx] = int(round(ImageStat.Stat(block).mean[0]))
+    return {"kind": "block_mean", "size": size, "cols": cols, "rows": rows,
+            "b64": base64.b64encode(bytes(vals)).decode()}
+
+
+def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
+    """Suspicion events from consecutive live block-mean grids: a block
+    whose signed live↔live delta keeps the SAME SIGN for >= min_run
+    transitions (each step >= min_mag) is an event — noise oscillates,
+    defacements don't swing back. Amplitude-independent by design
+    (Quinn's laundering path); min_mag keeps quantization jitter out.
+    Returns [{block, cols/rows implied by index, sign, run, total}]."""
+    if len(grids) < 2:
+        return []
+    n = len(grids[0])
+    events = []
+    for bi in range(n):
+        run, last_sign, total = 0, 0, 0
+        for t in range(1, len(grids)):
+            d = grids[t][bi] - grids[t - 1][bi]
+            sign = 1 if d >= min_mag else (-1 if d <= -min_mag else 0)
+            if sign != 0 and sign == last_sign:
+                run += 1
+                total += d
+            elif sign != 0:
+                run, last_sign, total = 1, sign, d
+            else:
+                run, last_sign, total = 0, 0, 0
+            if run == min_run:
+                events.append({"block": bi, "sign": last_sign,
+                               "run": run, "total": total})
+    return events
