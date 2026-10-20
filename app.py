@@ -26,16 +26,27 @@ from PIL import Image
 async def lifespan(app: FastAPI):
     """Client is created per running app instance (per event loop), not at
     module import — survives TestClient/per-test-loop usage (Sammy finding 2)."""
-    global _http
+    global _http, _capture_sem
     _http = httpx.AsyncClient(
         timeout=httpx.Timeout(180.0, connect=10.0), follow_redirects=True,
         event_hooks={"request": [_ssrf_httpx_hook]},
     )
+    _capture_sem = asyncio.Semaphore(2)
     init_run_db()
     try:
         yield
     finally:
         await _http.aclose()
+        if _browser is not None:
+            try:
+                await _browser.close()
+            except Exception:
+                pass
+        if _playwright is not None:
+            try:
+                await _playwright.stop()
+            except Exception:
+                pass
 
 
 app = FastAPI(title="MiniCPM-V Image Analyzer", lifespan=lifespan)
@@ -1027,6 +1038,31 @@ def blank_tail_bands(png: bytes, frac_white: float = 0.90) -> list:
     return out
 
 
+# Shared Chromium instance (external review C, 2026-10-20): cold launch per
+# /analyze cost ~1s CPU + risked zombie renderers on cancelled tasks. The
+# BROWSER is shared; the CONTEXT stays fresh per capture — that per-capture
+# isolation is the determinism guarantee, so this is process reuse only.
+_playwright = None
+_browser = None
+_capture_sem = None
+_BROWSER_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+]
+
+
+async def _get_browser():
+    global _playwright, _browser
+    if _browser is not None and _browser.is_connected():
+        return _browser
+    if _playwright is None:
+        from playwright.async_api import async_playwright
+        _playwright = await async_playwright().start()
+    _browser = await _playwright.chromium.launch(headless=True, args=_BROWSER_ARGS)
+    return _browser
+
+
 async def capture_screenshot(url: str, allow_insecure: bool = False):
     """Full-page screenshot via Playwright. Returns (png_bytes, tls_info).
 
@@ -1039,57 +1075,55 @@ async def capture_screenshot(url: str, allow_insecure: bool = False):
     CheckFailed with a classified code — an unreachable site is an OPERATIONAL
     finding, never a silent text-only degradation.
     """
-    from playwright.async_api import async_playwright
-
     async def _grab(ignore_https: bool) -> bytes:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
-            )
-            try:
-                context = await browser.new_context(
-                    viewport={"width": 1280, "height": 900},
-                    ignore_https_errors=ignore_https,
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/131.0.0.0 Safari/537.36"
-                    ),
-                    locale="en-US",
-                )
-                await context.add_init_script(
-                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-                )
-                page = await context.new_page()
-                # load is more reliable than networkidle on busy / protected sites
-                await page.route("**/*", _ssrf_playwright_route)
-                await page.goto(url, wait_until="load", timeout=60000)
-                await page.wait_for_timeout(2500)
-                # Capture-regime fix (fhlb 0.3809 investigation 2026-10-19):
-                # below-the-fold lazy-loaded sections render as PURE WHITE
-                # unless scrolled into view; baseline (Oct-17) caught the
-                # lucky load, later checks caught unlucky ones — page_sim
-                # between the SAME baseline and SAME site ranged 0.38..0.99
-                # (band y6219-6841 luma 255.0 vs 61.8 across runs). Humans
-                # scroll; full_page screenshots don't. Pre-scroll the whole
-                # page to trigger lazy loaders, wait (best effort) for image
-                # completion, return to top, then capture.
+        # Shared browser, FRESH context per capture (isolation = determinism:
+        # no cookies/page state bleed between checks). Semaphore caps
+        # concurrent renders so parallel /analyze calls can't OOM the box.
+        global _browser
+        sem = _capture_sem if _capture_sem is not None else asyncio.Semaphore(2)
+        async with sem:
+            for attempt in (0, 1):
                 try:
-                    await page.evaluate(LOADER_JS)
-                    await page.wait_for_function(
-                        "() => Array.from(document.images).every(i => i.complete)",
-                        timeout=20000)
-                except Exception:
-                    pass  # best effort: never fail a capture over lazy-load
-                await page.wait_for_timeout(600)
-                return await page.screenshot(full_page=True, type="png")
-            finally:
-                await browser.close()
+                    browser = await _get_browser()
+                    context = await browser.new_context(
+                        viewport={"width": 1280, "height": 900},
+                        ignore_https_errors=ignore_https,
+                        user_agent=(
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/131.0.0.0 Safari/537.36"
+                        ),
+                        locale="en-US",
+                    )
+                    try:
+                        await context.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', "
+                            "{get: () => undefined})"
+                        )
+                        page = await context.new_page()
+                        await page.route("**/*", _ssrf_playwright_route)
+                        await page.goto(url, wait_until="load", timeout=60000)
+                        await page.wait_for_timeout(2500)
+                        try:
+                            await page.evaluate(LOADER_JS)
+                            await page.wait_for_function(
+                                "() => Array.from(document.images)"
+                                ".every(i => i.complete)", timeout=20000)
+                        except Exception:
+                            pass  # lazy-load wait is best effort, never fatal
+                        await page.wait_for_timeout(600)
+                        return await page.screenshot(full_page=True,
+                                                     type="png")
+                    finally:
+                        await context.close()
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    dead = ("has been closed" in msg or "target closed" in msg
+                            or "crashed" in msg)
+                    if dead and attempt == 0:
+                        _browser = None  # died mid-run: relaunch once, once only
+                        continue
+                    raise
 
     try:
         return await _grab(False), {"verified": True, "error": None}
