@@ -99,6 +99,58 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int) -> dict:
     return out
 
 
+
+def inherit_ceilings(previous: dict, new_key: str, prev_key: str,
+                     prev_png: Path, new_png: Path, max_block_mae: int = 24) -> dict:
+    """Layout-gated ceiling inheritance across a human-gated re-baseline
+    (Sammy's eligibility-cost fix, refined per-block, Oct-20).
+
+    The human ceremony is the window boundary — that keeps the
+    freeze-at-fit-time law intact. But inheritance must NOT be a blanket
+    page-level copy: block coordinates are absolute page positions, so a
+    restructure silently re-labels content and a generous old carousel
+    ceiling could land on new static text. Gate: the fit tool measures
+    prev_png vs new_png with the SAME block grid; a block inherits its
+    old ceiling only if the two pinned baselines agree there
+    (block MAE <= max_block_mae). Blocks that moved get NO inherited
+    forgiveness (ceiling omitted -> global verdict covers them until the
+    new cohort earns real ceilings). Provisional ceilings are explicitly
+    marked and carry provenance.
+    """
+    import base64
+    import detdiff
+    pc = previous["ceilings"].get(prev_key)
+    if not pc:
+        raise ValueError(f"no previous ceiling for {prev_key}")
+    sig = detdiff.block_mae_sig(prev_png.read_bytes(), new_png.read_bytes(),
+                                size=pc["size"])
+    if (sig["cols"], sig["rows"]) != (pc["cols"], pc["rows"]):
+        raise ValueError("grid mismatch between baselines; no inheritance")
+    diffs = list(base64.b64decode(sig["b64"]))
+    old = list(base64.b64decode(pc["b64"]))
+    cells, inherited, denied = [], 0, 0
+    out_mask = bytearray(len(old))
+    for i, d in enumerate(diffs):
+        if d <= max_block_mae:
+            cells.append(old[i])
+            out_mask[i] = 1
+            inherited += 1
+        else:
+            cells.append(0)            # 0 = no ceiling; verdict falls back global
+            denied += 1
+    return {
+        "baseline_key": new_key, "size": pc["size"],
+        "cols": pc["cols"], "rows": pc["rows"],
+        "status": "provisional",
+        "provenance": {"inherited_from": prev_key,
+                       "gate": f"baseline_block_mae<={max_block_mae}",
+                       "inherited_blocks": inherited, "denied_blocks": denied,
+                       "authorized_by": "re-baseline ceremony (human)"},
+        "b64": base64.b64encode(bytes(cells)).decode(),
+        "mask_b64": base64.b64encode(bytes(out_mask)).decode(),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rows", default="/root/mpw-calibration/control.jsonl")
