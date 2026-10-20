@@ -107,7 +107,7 @@ def load_all(path: Path, regime: str = CURRENT_REGIME,
                 yield r, sig["g64"], False, "drama_row"
 
 
-def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
+def fit(path: Path, min_rows: int, k: float, floor: int, cap: int = 48,
         min_days: int = 5) -> dict:
     per_key: dict[str, list[list[int]]] = defaultdict(list)
     meta: dict[str, dict] = {}
@@ -135,14 +135,25 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
         cols = meta[key]["cols"]
         nblocks = meta[key]["rows"] * cols
         cells = []
+        disqualified = 0
         for bi in range(nblocks):
             col = [r[bi] for r in rows if bi < len(r)]
             if not col:
                 cells.append(floor)
                 continue
             p95 = statistics.quantiles(col, n=100)[94] if len(col) >= 4 else max(col)
-            ceil = min(cap, max(floor, int(round(k * p95))))
-            cells.append(ceil)
+            ceil = max(floor, int(round(k * p95)))
+            # DISQUALIFY, don't clamp (Sammy, Oct-20): clamping a block
+            # that fit above the cap to the cap would grant it a generous
+            # ceiling anyway — the anti-ratchet law says a block noisier
+            # than the cap gets NO forgiveness at all and falls back to
+            # the global verdict. A cap that clamps is a speed limit with
+            # a ticket price; a cap that disqualifies is a weight limit.
+            if ceil > cap:
+                cells.append(0)
+                disqualified += 1
+            else:
+                cells.append(ceil)
         span = 0.0
         ts = sorted(t for t in spans[key] if t)
         if len(ts) >= 2:
@@ -159,6 +170,7 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
         eligible = n >= min_rows and span >= min_days
         out["ceilings"][key] = {
             **meta[key], "observations": n, "span_days": round(span, 2),
+            "disqualified_blocks": disqualified,
             "status": "ok" if eligible else "insufficient",
             "b64": base64.b64encode(bytes(cells)).decode(),
         }
@@ -226,7 +238,9 @@ def main() -> None:
                          "status=insufficient and must not be enabled")
     ap.add_argument("--k", type=float, default=2.0)
     ap.add_argument("--floor", type=int, default=24)
-    ap.add_argument("--cap", type=int, default=255)
+    ap.add_argument("--cap", type=int, default=48,
+                   help="blocks whose fitted ceiling exceeds this are DISQUALIFIED "
+                        "(no ceiling, global fallback), not clamped to it")
     a = ap.parse_args()
     result = fit(Path(a.rows), a.min_rows, a.k, a.floor, a.cap)
     Path(a.out).write_text(json.dumps(result, indent=1))
