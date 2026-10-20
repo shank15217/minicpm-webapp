@@ -34,6 +34,17 @@ The web UI is optional; the entire workflow is available via a REST API.
 (user test plan U1–U6 + published weaknesses ledger W1–W11). Deploy order and
 tower/mode contract: [docs/DEPLOY.md](docs/DEPLOY.md). Calibration doctrine:
 [docs/calibration-protocol.md](docs/calibration-protocol.md).
+## Calibration (train -> enable)
+
+`calibration/` — the quantitative noise-floor system: `rig.py` (scheduled
+captures through the app's own regime, by code reference) accumulates
+`control.jsonl` cohort rows with per-block MAE grids; `fit.py` reduces
+them to per-block noise ceilings (`ceilings.json`). See
+`calibration/CALIBRATION.md` for the train -> enable workflow, the cron
+local-time pitfall, and the binding anti-ratchet rules. Runs out-of-band:
+no live verdict consults calibration, and it can be removed without
+affecting the monitor.
+
 
 ## Features
 
