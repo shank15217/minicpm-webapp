@@ -64,19 +64,23 @@ def load_rows(path: Path, regime: str = CURRENT_REGIME):
             yield r, sig["g64"]
 
 
-def fit(path: Path, min_rows: int, k: float, floor: int, cap: int) -> dict:
+def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
+        min_days: int = 5) -> dict:
     per_key: dict[str, list[list[int]]] = defaultdict(list)
     meta: dict[str, dict] = {}
+    spans: dict[str, list] = defaultdict(list)
     for r, g in load_rows(path):
         key = r.get("baseline_key") or r.get("baseline_sha", "")[:16]
         vals = list(base64.b64decode(g["b64"]))
         per_key[key].append(vals)
+        spans[key].append(r.get("ts", ""))
         meta[key] = {"size": g["size"], "cols": g["cols"], "rows": g["rows"]}
 
     out = {"fitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "regime": CURRENT_REGIME,
            "params": {"k": k, "floor": floor, "cap": cap,
-                      "stat": "p95", "min_rows": min_rows},
+                      "stat": "p95", "min_rows": min_rows,
+                      "min_days": min_days},
            "ceilings": {}}
     for key, rows in per_key.items():
         n = len(rows)
@@ -91,9 +95,23 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int) -> dict:
             p95 = statistics.quantiles(col, n=100)[94] if len(col) >= 4 else max(col)
             ceil = min(cap, max(floor, int(round(k * p95))))
             cells.append(ceil)
+        span = 0.0
+        ts = sorted(t for t in spans[key] if t)
+        if len(ts) >= 2:
+            from datetime import datetime as _dt
+            try:
+                span = (_dt.fromisoformat(ts[-1].replace("Z", "+00:00"))
+                        - _dt.fromisoformat(ts[0].replace("Z", "+00:00"))
+                        ).total_seconds() / 86400.0
+            except ValueError:
+                pass
+        # Eligibility is rows AND days (Sammy, Oct-20): dense cadence buys
+        # rows fast but must not collapse the multi-day requirement —
+        # diurnal/weekly variety is the point of the cohort, not row count.
+        eligible = n >= min_rows and span >= min_days
         out["ceilings"][key] = {
-            **meta[key], "observations": n,
-            "status": "ok" if n >= min_rows else "insufficient",
+            **meta[key], "observations": n, "span_days": round(span, 2),
+            "status": "ok" if eligible else "insufficient",
             "b64": base64.b64encode(bytes(cells)).decode(),
         }
     return out
@@ -165,8 +183,8 @@ def main() -> None:
     result = fit(Path(a.rows), a.min_rows, a.k, a.floor, a.cap)
     Path(a.out).write_text(json.dumps(result, indent=1))
     for key, c in sorted(result["ceilings"].items()):
-        print(f"{key}: {c['observations']} rows, {c['status']}, "
-              f"grid {c['cols']}x{c['rows']}@{c['size']}px")
+        print(f"{key}: {c['observations']} rows over {c['span_days']}d, "
+              f"{c['status']}, grid {c['cols']}x{c['rows']}@{c['size']}px")
 
 
 if __name__ == "__main__":

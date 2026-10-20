@@ -291,14 +291,31 @@ def save_baseline(url: str, image_bytes: bytes, description: Optional[str] = Non
     """
     key = url_to_hash(url)
     path = BASELINES_DIR / f"{key}.png"
-    _write_atomic(path, image_bytes)
     index = load_index()
+    entry = index["baselines"].get(key) or {}
+    # Ceremony must not eat its own evidence (Oct-20: tonight's re-pin
+    # overwrote the Oct-17 truth in place; inheritance and autopsies need
+    # the predecessor). Archive bytes + provenance before overwriting.
+    if path.exists() and entry.get("sha256"):
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        archive = BASELINES_DIR / f"{key}.prev-{stamp}.png"
+        archive.write_bytes(path.read_bytes())
+        entry.setdefault("superseded", []).append({
+            "sha256": entry["sha256"],
+            "captured_at": entry.get("captured_at"),
+            "capture_surface": entry.get("capture_surface"),
+            "archived_as": archive.name,
+        })
+        entry["superseded"] = entry["superseded"][-10:]
+    _write_atomic(path, image_bytes)
     index["baselines"][key] = {
         "url": url.strip(),
         "path": str(path),
         "captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "description": description or "",
         "sha256": hashlib.sha256(image_bytes).hexdigest(),
+        "capture_surface": capture_surface_sha(),  # stamped on archived predecessors too (Sammy)
+        "superseded": entry.get("superseded", []),
     }
     save_index(index)
     return key
