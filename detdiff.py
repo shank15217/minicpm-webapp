@@ -199,13 +199,18 @@ def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
     """Per-block mean luma (1 byte/block, b64) — the schema answer to the
     persistence clause (Oct-20, Sammy/Quinn): unsigned |MAE| vs the
     baseline cannot express sign, so slow same-direction edits are
-    invisible to it. Store the live block MEAN instead and derive
-    everything downstream:
-      * baseline↔live |delta| = |live_mean - baseline_mean| (cache the
-        baseline's grid once per pin — it is a constant) -> ceilings;
-      * live↔live SIGNED delta between consecutive rows =
-        live_mean(t) - live_mean(t-1) -> persistence events.
-    Same storage as today (~3 KB/tall page), strictly more information."""
+    invisible to it.
+
+    SCOPE — PERSISTENCE ONLY (Sammy's correction, measured; confirmed
+    locally: equal-mean content slide reads MAE 36 vs |Δmean| 5): the
+    mean grid must NEVER replace the MAE grid as the ceiling source.
+    Block-mean averaging cancels equal-mean edits — exactly the
+    swap/defacement class (measured under-read up to 27 levels on real
+    hero motion, 8/14 moving blocks). Rows carry BOTH grids:
+      * MAE grid (block_mae_sig)  -> ceiling fitting (unchanged, source of truth);
+      * mean grid (this fn)       -> live↔live SIGNED deltas between
+        consecutive rows -> persistence_events() only.
+    ~6 KB/row total for a tall page."""
     ia = Image.open(io.BytesIO(a_bytes)).convert("L")
     if ia.width != 1280:
         ia = ia.resize((1280, int(ia.height * 1280 / ia.width)))
