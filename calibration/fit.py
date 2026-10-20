@@ -39,8 +39,43 @@ from pathlib import Path
 CURRENT_REGIME = "prescroll-4"  # strict equality; changed regimes quarantine
 
 
-def load_rows(path: Path, regime: str = CURRENT_REGIME):
-    """Yield cohort rows; regime equality is exact (no truthiness)."""
+# Standing quarantine (Oct-20 import-incident batch, QA ruling): preserved
+# on disk, excluded from every fit. Match by ISO prefix.
+DEFAULT_EXCLUDE_TS = ("2026-10-20T03:51", "2026-10-20T03:52")
+
+
+def is_quiet(r: dict, vals: list, quiet_max_block: int) -> bool:
+    """Quiet-row gate (hard QA gate for enablement, Quinn+Sammy Oct-20).
+
+    A row is fit-eligible ONLY if BOTH:
+      * the row's own verdict is not `changed` (page-level calm), AND
+      * no single block moved more than `quiet_max_block` (byte scale).
+    The second condition closes Sammy's front door: a slow edit can keep
+    page_sim above the global threshold while persistently moving one
+    block; page-quiet is not block-quiet, and drama-trained ceilings are
+    just the ratchet wearing a different costume."""
+    if r.get("changed"):
+        return False
+    return max(vals, default=0) <= quiet_max_block
+
+
+def load_rows(path: Path, regime: str = CURRENT_REGIME,
+              exclude_ts_prefixes=DEFAULT_EXCLUDE_TS,
+              quiet_max_block: int = 64):
+    """Yield (row, grid) QUIET cohort rows; regime equality exact, drama
+    and quarantined windows dropped. Use load_all() for the excluded
+    audit trail."""
+    for r, g, quiet, why in load_all(path, regime, exclude_ts_prefixes,
+                                     quiet_max_block):
+        if quiet:
+            yield r, g
+
+
+def load_all(path: Path, regime: str = CURRENT_REGIME,
+             exclude_ts_prefixes=DEFAULT_EXCLUDE_TS,
+             quiet_max_block: int = 64):
+    """Every parseable row with its eligibility verdict: (row, grid,
+    quiet, reason_if_not). Exclusions must be auditable, not silent."""
     with path.open() as f:
         for line in f:
             line = line.strip()
@@ -61,7 +96,15 @@ def load_rows(path: Path, regime: str = CURRENT_REGIME):
                 continue
             if "g64" not in sig or "b64" not in sig["g64"]:
                 continue
-            yield r, sig["g64"]
+            ts = r.get("ts", "")
+            if any(ts.startswith(p) for p in exclude_ts_prefixes):
+                yield r, sig["g64"], False, "quarantined_window"
+                continue
+            vals = list(base64.b64decode(sig["g64"]["b64"]))
+            if is_quiet(r, vals, quiet_max_block):
+                yield r, sig["g64"], True, ""
+            else:
+                yield r, sig["g64"], False, "drama_row"
 
 
 def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
@@ -69,7 +112,11 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
     per_key: dict[str, list[list[int]]] = defaultdict(list)
     meta: dict[str, dict] = {}
     spans: dict[str, list] = defaultdict(list)
-    for r, g in load_rows(path):
+    excluded = defaultdict(int)
+    for r, g, quiet, why in load_all(path):
+        if not quiet:
+            excluded[why] += 1
+            continue
         key = r.get("baseline_key") or r.get("baseline_sha", "")[:16]
         vals = list(base64.b64decode(g["b64"]))
         per_key[key].append(vals)
@@ -80,7 +127,8 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int,
            "regime": CURRENT_REGIME,
            "params": {"k": k, "floor": floor, "cap": cap,
                       "stat": "p95", "min_rows": min_rows,
-                      "min_days": min_days},
+                      "min_days": min_days, "quiet_max_block": 64,
+                      "excluded": dict(excluded)},
            "ceilings": {}}
     for key, rows in per_key.items():
         n = len(rows)
