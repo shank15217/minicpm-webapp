@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import functools
 import hashlib
 import io
+import inspect
 import json
 import os
 import re
@@ -1036,6 +1037,26 @@ def blank_tail_bands(png: bytes, frac_white: float = 0.90) -> list:
         if sum(1 for v in px if v >= 250) / len(px) >= frac_white:
             out.append(f"{y0}-{y1}")
     return out
+
+
+# Capture-surface identity (Sammy's durable ask, Oct-20): every component
+# that determines WHAT a capture shows, hashed together. Rigs and probes
+# must equal this exact value to be regime-comparable — strictly better
+# than git-lineage equality, which can pass while a capture-relevant
+# constant drifted, and fail while nothing relevant changed (deploy-
+# pending cosmetics). Includes the loader program, the sanity predicate
+# source, and the fixed context parameters (viewport/locale/UA/args).
+def capture_surface_sha() -> str:
+    import hashlib
+    parts = [
+        LOADER_JS,
+        inspect.getsource(blank_tail_bands),
+        json.dumps(_BROWSER_ARGS, sort_keys=True),
+        "viewport=1280x900",
+        "locale=en-US",
+        "UA=Chrome/131.0.0.0",
+    ]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
 # Shared Chromium instance (external review C, 2026-10-20): cold launch per
