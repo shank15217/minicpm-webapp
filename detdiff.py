@@ -224,30 +224,162 @@ def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
             "b64": base64.b64encode(bytes(vals)).decode()}
 
 
-def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2) -> dict:
-    """Consumer-side corpus guard (qa-40, Quinn's row-shape rule): rows are
-    cohort dicts as read from the control ledger; only rows carrying a
-    `mean_grid` count. While fewer than `min_run` mean-grid rows exist the
-    honest answer is status="insufficient_corpus" with a human-readable
-    `message` — NEVER a bare empty list a dashboard could read as
-    "checked, nothing found". At >= min_run rows: status="ok" plus the
-    detector's events. Scope law unchanged (eb7d0bb): mean grids never
-    enter a change verdict; MAE grid stays the ceiling source."""
-    grids = []
+def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2,
+                       expected_interval_s: float | None = None) -> dict:
+    """Per-site persistence corpus (Sammy/Quinn attack round, same day as
+    the first wiring — the law must NOT be loadable on callers).
+
+    The ledger is cross-site and shape-variable, so this function, not
+    the caller, owns the three laws:
+      1. PARTITION: rows are grouped by `baseline_key` internally and
+         sorted by `ts`. Ungrouped cross-site streams were measured
+         guilty both directions: phantom storms (1360 fake events) and
+         truth-annihilation (8 real events -> 0, status "ok").
+      2. SHAPE: block index means position in THAT shot's own grid. A
+         `(cols, rows)` change — or a grid whose decoded length disagrees
+         with its own metadata — is a corpus BREAK, not a diff: any
+         re-pin/recapture boundary starts a fresh epoch.
+      3. ADJACENCY: a row present without `mean_grid` (capture-failure
+         path), an unparseable ts, or a ts gap wider than
+         `3 x expected_interval_s` breaks the run too. The gap law
+         travels with the schedule: `expected_interval_s=None` derives
+         `3 x median(spacings)` from the site's own rows, so the
+         6h->1h cadence change cannot silently launder splices (Sammy).
+
+    Return shape is PER-SITE (Sammy decision 1): "ok" is never a
+    whole-ledger word — amazon can sit in `shape_mismatch` while fhlb
+    reports `ok` in the same call:
+      {"sites": {key: {"status": "ok" | "insufficient_corpus" |
+                       "shape_mismatch",
+                       "rows": <mean-grid rows seen for site>,
+                       "usable_rows": <consecutive rows in newest epoch>,
+                       "need": min_run,
+                       "max_run_possible": usable_rows - 1,
+                       "events": [... "epoch_start" stamped ...],
+                       "skipped": {no_mean_grid, undecodable,
+                                   shape_break, gap_break, no_ts},
+                       "message"?}},
+       "corpus_breaks": <total>, "message"?}
+    House rule everywhere: never a bare [] that reads "checked, clean" —
+    insufficiency is a named status with a message, and a site with 8
+    usable rows reports max_run_possible=7 so no consumer mistakes the
+    0-events answer (a run of 8 needs 9 rows) for a clean bill.
+    Scope law unchanged (eb7d0bb): mean grids never enter a change
+    verdict; the MAE grid stays the ceiling source.
+    """
+    import datetime as _dt
+    by_site: dict[str, list] = {}
     for r in rows:
-        mg = r.get("mean_grid") if isinstance(r, dict) else None
-        if not mg:
-            continue
-        raw = mg["b64"] if isinstance(mg, dict) else mg
-        grids.append(list(base64.b64decode(raw)))
-    if len(grids) < min_run:
-        return {"status": "insufficient_corpus", "rows": len(grids),
-                "need": min_run, "events": [],
-                "message": f"insufficient corpus: {len(grids)} mean-grid "
-                           f"row(s), need {min_run} — no persistence verdict"}
-    return {"status": "ok", "rows": len(grids), "need": min_run,
-            "events": persistence_events(grids, min_run=min_run,
-                                         min_mag=min_mag)}
+        if isinstance(r, dict):
+            by_site.setdefault(str(r.get("baseline_key", "")), []).append(r)
+
+    sites: dict[str, dict] = {}
+    total_breaks = 0
+    for key, srows in by_site.items():
+        parsed = []
+        for r in srows:
+            ts = r.get("ts")
+            try:
+                t = (_dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                     if ts else None)
+            except ValueError:
+                t = None
+            parsed.append((t, r))
+        parsed.sort(key=lambda x: (x[0] is None, x[0]))
+
+        ts_all = [t for t, _ in parsed if t is not None]
+        spacings = [(b - a).total_seconds()
+                    for a, b in zip(ts_all, ts_all[1:])
+                    if (b - a).total_seconds() > 0]
+        if expected_interval_s:
+            max_gap: float | None = 3.0 * expected_interval_s
+        elif spacings:
+            srt = sorted(spacings)
+            max_gap = 3.0 * srt[len(srt) // 2]
+        else:
+            max_gap = None  # single row: no schedule to launder against
+
+        epochs: list[tuple[tuple, list, object, object]] = []
+        skips = {"no_mean_grid": 0, "undecodable": 0, "shape_break": 0,
+                 "repin_break": 0, "gap_break": 0, "no_ts": 0}
+        cur = None            # [shape, grids, start_ts]
+        prev_t = None
+
+        def _close():
+            nonlocal cur
+            if cur is not None:
+                epochs.append(cur)
+                cur = None
+
+        for t, r in parsed:
+            mg = r.get("mean_grid")
+            if mg is None:                      # row present, grid absent
+                _close(); skips["no_mean_grid"] += 1
+                continue
+            try:
+                meta = mg if isinstance(mg, dict) else {"b64": mg}
+                raw = base64.b64decode(meta["b64"])
+                cols = int(meta.get("cols") or 0)
+                nrow = int(meta.get("rows") or 0)
+                if cols and nrow and cols * nrow != len(raw):
+                    raise ValueError("grid length contradicts metadata")
+            except Exception:
+                _close(); skips["undecodable"] += 1
+                continue
+            if t is None:                       # unorderable -> no epoch
+                _close(); skips["no_ts"] += 1
+                continue
+            shape = (cols, nrow, len(raw))
+            bsha = r.get("baseline_sha")
+            if cur is not None:
+                if shape != cur[0]:
+                    _close(); skips["shape_break"] += 1
+                elif bsha and cur[3] and bsha != cur[3]:
+                    # re-pin boundary: block indices are relative to the
+                    # baseline, so a new baseline starts a new corpus
+                    _close(); skips["repin_break"] += 1
+                elif max_gap and prev_t and \
+                        (t - prev_t).total_seconds() > max_gap:
+                    _close(); skips["gap_break"] += 1
+            if cur is None:
+                cur = (shape, [], t.isoformat().replace("+00:00", "Z"), bsha)
+                epochs.append(cur)
+            cur[1].append(list(raw))
+            prev_t = t
+
+        events = []
+        for _shape, grids, start, _bsha in epochs:
+            if len(grids) >= 2:
+                for ev in persistence_events(grids, min_run=min_run,
+                                             min_mag=min_mag):
+                    ev["epoch_start"] = start
+                    events.append(ev)
+        usable = len(epochs[-1][1]) if epochs else 0
+        breaks = sum(skips.values())
+        total_breaks += breaks
+        site = {"status": "insufficient_corpus", "rows": len(parsed),
+                "usable_rows": usable, "need": min_run,
+                "max_run_possible": max(usable - 1, 0),
+                "events": events, "skipped": skips}
+        if usable >= min_run:
+            site["status"] = "ok"
+        elif skips["shape_break"] or skips["undecodable"]:
+            site["status"] = "shape_mismatch"
+            site["message"] = (f"capture-shape break reset the corpus; "
+                               f"{usable}/{min_run} usable rows since — not "
+                               f"measurable until capture shape settles "
+                               f"(re-pin decision), NOT a clean result")
+        else:
+            site["message"] = (f"insufficient corpus: {usable} consecutive "
+                               f"mean-grid row(s), need {min_run} — no "
+                               f"persistence verdict")
+        sites[key] = site
+
+    out = {"sites": sites, "corpus_breaks": total_breaks}
+    if not sites:
+        out["message"] = ("no mean-grid rows in ledger — nothing checked, "
+                          "NOT a clean verdict")
+    return out
 
 
 def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
@@ -256,7 +388,18 @@ def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
     transitions (each step >= min_mag) is an event — noise oscillates,
     defacements don't swing back. Amplitude-independent by design
     (Quinn's laundering path); min_mag keeps quantization jitter out.
-    Returns [{block, cols/rows implied by index, sign, run, total}]."""
+    Returns [{block, cols/rows implied by index, sign, run, total}].
+
+    GRIDS MUST BE ONE SITE, ONE SHAPE, ONE ADJACENT EPOCH — callers do
+    not get to guarantee that informally (a cross-shape scan was a live
+    crash / silent-blindness vector until the epoch partition landed), so
+    the requirement is asserted here: mismatch raises, never IndexError,
+    never a truncated field of view. Use persistence_corpus() for raw
+    ledger rows."""
+    if grids and any(len(g) != len(grids[0]) for g in grids):
+        raise ValueError("persistence_events: mismatched grid shapes in one "
+                         "stream — partition by baseline_key/shape/adjacency "
+                         "first (see persistence_corpus)")
     if len(grids) < 2:
         return []
     n = len(grids[0])
