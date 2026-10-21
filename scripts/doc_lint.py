@@ -318,11 +318,13 @@ def version_skew():
     return []
 
 
-# Name AND count scoped (Quinn gap 3): gate mode tolerates AT MOST `count`
-# hits per key — observed > recorded fails the gate on the surplus, so a
-# NEW doc citing regime_filter.py cannot launder through the window. The
-# entry dies with the reconciliation commit that rewrites the sentences.
-KNOWN_PENDING_RECONCILE = {"regime_filter.py": 2}
+# EMPTY since the 2026-10-21 reconciliation: the regime_filter.py sentences
+# were rewritten against the real loader (calibration/fit.py) and the count
+# pin expired WITH them in the same commit — its whole life was one refactor,
+# exactly as pinned. Mechanism retained: a future reconcile may pin
+# {"file.ext": N} for AT MOST N cites; observed > recorded fails the gate on
+# the surplus (a NEW cite cannot launder through a pending-reconcile window).
+KNOWN_PENDING_RECONCILE: dict[str, int] = {}
 
 
 def apply_allowlist(violations):

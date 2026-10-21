@@ -175,10 +175,10 @@ Do not expose :8000 publicly before S2/S2b close; LAN-only per house policy.
   schemes, IP-literals of the metadata class, dotless/.internal/.localhost
   names (loopback + private LAN literals allowed, named). Strong SSRF
   surface (url param + httpx redirects) unchanged. Control-batch rig
-  mirrors the same split (capture_regime prescroll-2; rig rows without a
-  regime stamp are quarantined by scripts/regime_filter.py — 80/80 legacy
-  cohort rows currently excluded; re-collect under prescroll before any
-  graduation).
+  mirrors the same split (every row stamped `capture_regime`; the fit
+  loader in calibration/fit.py admits only rows stamped CURRENT_REGIME,
+  so un-stamped or prior-regime rows never enter a fit; re-collect under
+  the current regime before any graduation).
 S1: MPW_ADMIN_TOKEN gates
   the only baseline-mutating path (capture_baseline; no delete endpoint
   exists as of this writing — any future mutation endpoint must share it).

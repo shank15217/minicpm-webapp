@@ -56,10 +56,14 @@ curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwr
 > `779312d`). The stored baselines are probably still true; burning them
 > under a defective regime pins garbage as truth. Re-check order after
 > restart: boot receipt -> fhlb/amazon check rows -> only then any
-> re-capture decision. The calibration cohort is quarantined to regime
-> `prescroll-3` (all 88 legacy rows excluded by regime_filter.py equality;
-> first clean rows 12:00 UTC) — nothing is "calibrated" until new-regime
-> rows accumulate across diurnal windows (earliest graduation ~Oct 21).
+> re-capture decision. The calibration cohort is quarantined to the
+> CURRENT_REGIME stamp (`prescroll-4`): the fit loader (calibration/fit.py
+> `load_all`) admits only rows whose `capture_regime` equals it, so
+> un-stamped legacy rows never enter a fit; fit-time exclusions are
+> auditable in the fit output's `params.excluded` (as of the 2026-10-21
+> reconciliation: 8 quarantined-window + 28 drama rows) — nothing is
+> "calibrated" until new-regime rows accumulate across diurnal windows
+> (earliest graduation ~Oct 21).
 curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
 ```
 Ping-pong any surprise to the room with the test ID (U1) — Quinn health-gates
@@ -104,14 +108,14 @@ Your call: Q4_K_M vs Q8_0 — both supported, one env var apart.
 The kit is shipped and pinned but **not installed** — installing is yours:
 ```bash
 mkdir -p ~/.config/systemd/user
-# NOTE: the monitor kit ships on v0.5-dev only — it is NOT in the v0.4.3 tag
-# you just checked out, so pull the four unit files straight from that ref
-# (QA-verified 2026-10-16: `ls deploy/systemd/` in a v0.4.3 checkout does not
-# contain minicpm-monitor*).
-cd /root/minicpm-webapp && git fetch origin v0.5-dev   # prod clone tracks only main by default (QA-verified)
+# NOTE (updated 2026-10-21): the monitor kit is ON MAIN (v0.5-dev merged
+# Oct-21). Fetch and read blobs from the NAMED ref — never FETCH_HEAD:
+# any unrelated fetch silently retargets it, so the old ceremony could
+# materialize the wrong tree's unit files.
+cd /root/minicpm-webapp && git fetch origin main   # prod clone tracks only main by default (QA-verified)
 for f in minicpm-monitor.service minicpm-monitor.timer \
          minicpm-monitor-stale.service minicpm-monitor-stale.timer; do
-  git show FETCH_HEAD:deploy/systemd/$f > ~/.config/systemd/user/$f
+  git show origin/main:deploy/systemd/$f > ~/.config/systemd/user/$f
 done                                                     # all four verified to materialize this way
 # ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
 # v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
@@ -126,7 +130,7 @@ done                                                     # all four verified to 
 # git checkout -B v0.5-dev origin/v0.5-dev — git materializes it identically.
 # (Never clean baselines/ to resolve a monitorlib.py abort — it is the one
 # directory on that disk that holds irreplaceable prod evidence.)
-git show FETCH_HEAD:monitorlib.py > /root/minicpm-webapp/monitorlib.py
+git show origin/main:monitorlib.py > /root/minicpm-webapp/monitorlib.py
 # EDIT MPW_DIR/MPW_BASE in the two .service files if your paths differ
 loginctl enable-linger $USER
 systemctl --user daemon-reload

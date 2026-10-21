@@ -162,13 +162,23 @@ def test_gap5_alias_keys_resolve_with_binding_context():
 
 
 def test_count_scoped_allowlist_closes_laundering_window():
-    """Quinn gap 3: the regime_filter.py allowance is AT MOST 2 hits; a new
-    cite in any doc fails the gate on the surplus."""
+    """Quinn gap 3 (mechanism): with a pin {"regime_filter.py": 2}, two cites
+    pass and a third fails on the surplus. The LIVE pin is now EMPTY — the
+    excuse expired with the sentence rewrite (2026-10-21 reconciliation):
+    any phantom cite fires in gate mode regardless of doc."""
     two = ["docs/a.md:1: cites 'scripts/regime_filter.py' (phantom)",
            "docs/b.md:9: cites 'scripts/regime_filter.py' (phantom)"]
-    assert doc_lint.apply_allowlist(two) == []
-    three = two + ["docs/new.md:2: cites 'regime_filter.py' (phantom)"]
-    assert any("EXCEEDED" in o for o in doc_lint.apply_allowlist(three))
+    assert doc_lint.KNOWN_PENDING_RECONCILE == {}, \
+        "live allow-list must be empty post-reconciliation"
+    assert len(doc_lint.apply_allowlist(two)) == 2, "empty pin tolerates nothing"
+    saved = doc_lint.KNOWN_PENDING_RECONCILE
+    setattr(doc_lint, "KNOWN_PENDING_RECONCILE", {"regime_filter.py": 2})
+    try:
+        assert doc_lint.apply_allowlist(two) == []
+        three = two + ["docs/new.md:2: cites 'regime_filter.py' (phantom)"]
+        assert any("EXCEEDED" in o for o in doc_lint.apply_allowlist(three))
+    finally:
+        setattr(doc_lint, "KNOWN_PENDING_RECONCILE", saved)
 
 
 def test_sinc1_declared_scope_boundary_known_silent():
