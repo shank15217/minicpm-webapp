@@ -105,15 +105,15 @@ def fact_table():
 # sentence boundary (found by running the detector on the live tree).
 CLAUSE_SPLIT_RE = re.compile(r"[;,()\[\]·.]|\u2014")
 # binding context for prose windows; table rows are binding BY CONSTRUCTION
-BIND_RE = re.compile(r"[=→⇒]|->|\bis\b|\broutes?\b|\bmaps?\b|\bdefaults?\b"
+BIND_RE = re.compile(r"[=→⇒]|->|\bis\b|\broutes?\b|\bmaps?\b"
                      r"|\bbound?\b|\bmode\b|\btower\b|\bport\b|\bfile\b"
                      r"|\bsends?\b|\bsending\b|\bpoints?\b|\bpointe?[drs]?\b"
                      r"|\bredirect\w*\b|\bserves?\b|\bserved\b")
+# 'default' was REMOVED from this list: "Unknown modes fall back to fast
+# (cheaper default)" is app.py prose about precedence, not a tower binding.
 COPULA_RE = re.compile(r"\bis the\b|[=→]|\b->|\broutes to\b|\bmaps to\b")
 # "detail|fast" alternation lists both modes without equating them
 ALTERNATION_RE = re.compile(r"\b(fast|detail|ocr|general|16x|4x)\s*\|\s*(fast|detail|ocr|general|16x|4x)\b")
-# a claim binds to its nearest subject within this many characters
-NEAR_BIND = 40
 SHELL_WINDOW_RE = re.compile(r"&&|\|\||\$\(")
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 
@@ -162,6 +162,40 @@ def _binding_spans(window):
     return spans
 
 
+def _has_subject(window, canon, facts):
+    for w, c in facts["aliases"].items():
+        if c == canon and re.search(r"(?<![-\w])" + re.escape(w) + r"\b", window):
+            return True
+    return False
+
+
+def _has_claim(window, side, facts):
+    return any(re.search(t, window) for t in facts["own"][side])
+
+
+def _dangling_hit(windows, facts):
+    """Gap 6 (PAD-1): 'mode=fast, in production since ..., routes OCR to
+    :8081' — commas strand the mode subject in its own clause, so within-
+    clause pairing is blind. LINE-LEVEL ACCOUNTING: when a window pairs a
+    mode subject with binding context ('mode=fast' = copula) but the line
+    carries NO same-side claim token anywhere while the OTHER side's claim
+    does appear, the line binds the mode across the appositive gap.
+    Accounting over the whole line is what keeps every legitimate
+    both-ports receipt silent: a line that mentions fast AND its own
+    :8080/f16 has nothing dangling."""
+    joined = " ".join(windows)
+    for canon in ("fast", "detail"):
+        other = facts["other"][canon]
+        if any(_has_subject(w, canon, facts) and BIND_RE.search(w)
+               for w in windows):
+            if (_has_claim(joined, other, facts)
+                    and not _has_claim(joined, canon, facts)):
+                return (f"binds '{canon}' to the {other} side across an "
+                        f"appositive gap ({canon} claimed with binding "
+                        f"context; only {other}-side claim tokens on the line)")
+    return None
+
+
 def _window_hit(window, facts, row_window=False):
     if not window.strip() or SHELL_WINDOW_RE.search(window):
         return None
@@ -172,7 +206,11 @@ def _window_hit(window, facts, row_window=False):
             subs.append((m.start(), canon))
     if not subs:
         return None                  # receipts naming both ports with no
-    if not row_window and not BIND_RE.search(window):
+    # gap 7: an explicit port token IS the binding context; context words
+    # stay required only for prose without any port claim ("a general
+    # speedup of 2x" — ambiguous alias, no port — never reaches here).
+    if not row_window and not BIND_RE.search(window) \
+            and not any(p in window for p in facts["ports"].values()):
         return None                  # subject stay prose in a prose window
     for off, span in _binding_spans(window):
         span_subs = [(p, c) for p, c in subs if off <= p < off + len(span)]
@@ -183,7 +221,16 @@ def _window_hit(window, facts, row_window=False):
                 for m in re.finditer(t, span):
                     abs_pos = off + m.start()
                     s_pos, s_mode = min(span_subs, key=lambda s: abs(s[0] - abs_pos))
-                    if abs(s_pos - abs_pos) <= NEAR_BIND and s_mode != side:
+                    # NO character cap (gap 6): the clause/conjunction span
+                    # is the window, appositive length is not innocence.
+                    # Binding-context sources (gap 7): an explicit PORT token
+                    # or a definite mode NAME is its own context; only an
+                    # AMBIGUOUS-alias subject needs a binding word, and only
+                    # in prose — table rows bind by construction (TBL-1).
+                    definite = s_mode in ("fast", "detail")
+                    if s_mode != side and (t.startswith(":") or definite
+                                           or row_window
+                                           or BIND_RE.search(span)):
                         return (f"binds '{s_mode}' to the {side} side "
                                 f"({t!r} nearest-subject pairing)")
     if not row_window and {"fast", "detail"} <= {c for _, c in subs} \
@@ -209,10 +256,15 @@ def alias_inversions(fname, text, facts):
                else line).lower()
         row_window = bool(TABLE_ROW_RE.match(line))
         windows = [eff] if row_window else CLAUSE_SPLIT_RE.split(eff)
+        hit = None
         for win in windows:
-            if hit := _window_hit(win, facts, row_window):
-                out.append(f"{fname}:{ln}: {hit}: {line.strip()[:90]}")
-                break                    # one entry per line (Sammy dedupe)
+            hit = _window_hit(win, facts, row_window)
+            if hit:
+                break
+        if not hit and not row_window:
+            hit = _dangling_hit(windows, facts)   # gap 6: appositive gap
+        if hit:
+            out.append(f"{fname}:{ln}: {hit}: {line.strip()[:90]}")
     return out
 
 

@@ -179,3 +179,48 @@ def test_sinc1_declared_scope_boundary_known_silent():
     sinc = ("RETRACTION OF MY EARLIER DOUBT: `detail = f1" + "6 = :808" + "0`"
             " stands.\n")
     assert doc_lint.alias_inversions("sinc.md", sinc, facts()) == []
+
+
+# ---- round three at 0c1c70e (Sammy gaps 6-7 + TBL-1) ----
+
+def test_gap6_padding_cannot_launder_the_window():
+    """The 40-char cap WAS the hole: the same canonical inversion survives
+    by exceeding it. Cap removed; the clause/conjunction span is the window
+    and LINE-LEVEL ACCOUNTING catches the appositive-gap shape: a mode
+    claimed with binding context whose own side contributes no claim token
+    anywhere on the line is bound to whatever the line does claim."""
+    pad0 = "mode=fast routes OC" + "R to :808" + "1."
+    pad1 = ("mode=fast, in production since the v0.4 deterministic verdict "
+            "layer shipped and the narration prompt was rewritten, routes "
+            "OCR to :808" + "1.")
+    for name, planted in (("PAD-0", pad0), ("PAD-1", pad1)):
+        v = doc_lint.alias_inversions("planted.md", planted, facts())
+        assert len(v) == 1, f"{name} laundering-by-padding walked: {v}"
+    # the accounting must NOT wake the wolves: receipts that carry BOTH
+    # sides' claims are never dangling, whatever the prose length
+    for ok in ("# (:8081, 256 tok/tile). Unknown modes fall back to fast.\n",
+               'label=$([ "$port" = ":8080" ] && echo 16x || echo 4x)\n',
+               "f16(:808" + "0)=489 vs -4x(:808" + "1)=1851 prompt tokens.\n"):
+        assert doc_lint.alias_inversions("ok.md", ok, facts()) == [], f"FP: {ok}"
+
+
+def test_gap7_explicit_port_is_its_own_binding_context():
+    """Sammy gap 7 + control-integrity note: CTRL-2 was never a control —
+    the honest pair is OCRNC-1 (false binding, must fire) vs CTRL-2 (TRUE
+    binding, must stay silent) and no context-word rule is needed for
+    either, because the port token is the context."""
+    ocrnc = "OCR traffic lands on :808" + "0."
+    v = doc_lint.alias_inversions("planted.md", ocrnc, facts())
+    assert len(v) == 1, f"OCRNC-1 walked on missing context words: {v}"
+    ctrl2 = "OCR traffic to :808" + "1 is expected\n"
+    assert doc_lint.alias_inversions("ok.md", ctrl2, facts()) == []
+
+
+def test_tbl1_file_marker_in_table_cell_fires():
+    """Sammy TBL-1: the row window must claim file markers, not just ports —
+    the row binds BY CONSTRUCTION, no binding words required."""
+    planted = "| detail | f1" + "6 |\n"
+    v = doc_lint.alias_inversions("planted.md", planted, facts())
+    assert len(v) == 1, f"TBL-1 walked: {v}"
+    ok = "| fast | f16 |\n"  # TRUE cell pairing
+    assert doc_lint.alias_inversions("ok.md", ok, facts()) == []

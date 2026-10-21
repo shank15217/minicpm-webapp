@@ -120,8 +120,9 @@ MODEL_DIR=/opt/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh   # :8080 (
 ```
 
 App env overrides: `PORT`, `HOST`, `BASELINES_DIR`,
-`LLAMA_SERVER_16X` (detail/f16 backend URL), `LLAMA_SERVER_4X` (fast backend
-URL), `DET_PASS_SIM` (deterministic change threshold, default `0.995` —
+`LLAMA_SERVER_16X` (legacy env: the fast/f16 backend URL, `:8080`),
+`LLAMA_SERVER_4X` (legacy env: the detail backend URL, `:8081`),
+`DET_PASS_SIM` (deterministic change threshold, default `0.995` —
 provisional until the v0.5 control calibration; see
 `docs/calibration-protocol.md`).
 
