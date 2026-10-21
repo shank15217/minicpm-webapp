@@ -74,9 +74,6 @@ def test_static_orientation_labels():
     # (detector scope, not detector absence — Quinn/Sammy). Any tracked
     # .py/.sh/.md line carries the pin; RETRACT-marked lines are exempt,
     # a bare retracted number outside them fails the gate.
-    dead = tuple(s.replace("~", "~") for s in (  # built via join to keep this detector line exempt
-        "8" + "37 visual tokens", "~8" + "30 visual tokens", "8" + "37 prompt",
-        "= " + "837", "8" + "32 vs 223", "vs -4x = " + "223"))
     scan = {"app.py": app, "static/index.html": html}
     for f in sorted(ROOT.rglob("*")):
         if (".git" in f.parts or ".venv" in f.parts or "__pycache__" in f.parts
@@ -86,14 +83,53 @@ def test_static_orientation_labels():
         scan[str(f.relative_to(ROOT))] = f.read_text(errors="ignore")
     violations = []
     for fname, text in scan.items():
-        for ln, line in enumerate(text.splitlines(), 1):
-            if "RETRACT" in line.upper():
-                continue
-            for d in dead:
-                if d in line:
-                    violations.append(f"{fname}:{ln}: {line.strip()[:90]}")
-    assert not violations, ("falsified receipts live (one per line):\n"
+        violations.extend(dead_line_violations(fname, text))
+    assert not violations, ("falsified receipts live (one entry per line):\n"
                             + "\n".join(violations))
+
+
+# --- exemption semantics (Sammy 2026-10-21: pin them or the next paragraph
+# re-wrap at 100 cols resurrects a dead number through the RETRACT hole) ---
+# Built via concat so this file's own lines never carry a dead literal.
+DEAD_RECEIPTS = ("8" + "37 visual tokens", "~8" + "30 visual tokens",
+                 "8" + "37 prompt", "= " + "837",
+                 "8" + "32 vs 223", "vs -4x = " + "223")
+
+
+def dead_line_violations(fname, text):
+    """Per-line rule: a retraction is legal ONLY if the RETRACT marker shares
+    the physical line with the figure. One entry per offending line even when
+    several dead strings hit it (Sammy: repeated lines train people to ignore
+    the gate's output)."""
+    out = []
+    for ln, line in enumerate(text.splitlines(), 1):
+        if "RETRACT" in line.upper():
+            continue
+        if any(d in line for d in DEAD_RECEIPTS):
+            out.append(f"{fname}:{ln}: {line.strip()[:90]}")
+    return out
+
+
+def test_retraction_exemption_semantics():
+    """Clause-6 doctrine on the linter itself: three planted fixtures pin
+    the per-line RETRACT exemption (Quinn acceptance, Sammy amendment)."""
+    num = "the detail tower measured 8" + "37 visual tokens"
+    # 1) planted inverted line WITHOUT a marker => must fire
+    v = dead_line_violations("planted.md", "intro\n> " + num + "\n")
+    assert len(v) == 1 and "planted.md:2" in v[0], f"planted live claim slipped: {v}"
+    # 2) legitimate retraction: marker on the SAME physical line => must NOT fire
+    v = dead_line_violations("honest.md", "prior claim (" + num + ") RETRACTED by re-measure\n")
+    assert v == [], f"lawful RETRACT line flagged: {v}"
+    # 3) WRAPPED retraction: marker on the previous line, figure alone on the
+    #    next (the exact README:26 shape that hid a dead number at 3eb16f0)
+    #    => must fire. Re-wrapping a paragraph is not a retraction.
+    wrapped = "RETRACTED: the old receipt said\n> " + num + " in the original run\n"
+    v = dead_line_violations("wrapped.md", wrapped)
+    assert len(v) == 1 and "wrapped.md:2" in v[0], f"wrapped retraction laundered the figure: {v}"
+    # dedupe check: one line hit by two dead strings reports ONCE
+    two = "x 8" + "37 prompt and = 83" + "7 tokens\n"
+    v = dead_line_violations("dedupe.md", two)
+    assert len(v) == 1, f"line double-reported: {v}"
 
 
 def test_live_tower_orientation():
