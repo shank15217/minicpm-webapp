@@ -1,0 +1,10 @@
+[Unit]
+Description=minicpm-webapp staleness check (hourly + at boot; Persistent catches missed windows)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

@@ -116,6 +116,16 @@ done                                                     # all four verified to 
 # ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
 # v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
 # Pull it into the same place the unit expects:
+#
+# PLACEMENT CONTRACT (decided 2026-10-17): monitorlib.py lives at the REPO
+# ROOT — that is the deploy contract; systemd ExecStart runs it from the repo
+# root, so it does NOT move to scripts/. Never hot-copy it onto main: there
+# it is untracked and BLOCKS `git checkout v0.5-dev` — git blocks on file
+# existence, not content, even when byte-identical (Sammy, measured). If a
+# checkout ever aborts naming monitorlib.py: mv monitorlib.py /tmp &&
+# git checkout -B v0.5-dev origin/v0.5-dev — git materializes it identically.
+# (Never clean baselines/ to resolve a monitorlib.py abort — it is the one
+# directory on that disk that holds irreplaceable prod evidence.)
 git show FETCH_HEAD:monitorlib.py > /root/minicpm-webapp/monitorlib.py
 # EDIT MPW_DIR/MPW_BASE in the two .service files if your paths differ
 loginctl enable-linger $USER
@@ -161,7 +171,7 @@ If `checkout` aborts on `monitorlib.py`, see W11: move it to `/tmp` and retry �
 | Hourly site checks | systemd timer (A3) | automatic once installed |
 | "Is the watcher alive?" | systemd stale timer (A3) | or manual one-liner above |
 | Control batch (calibration evidence, 6h windows) | Quinn's cron on pvellm, durable paths | already installed; rows carry `trigger`+`detdiff_commit` |
-| Tolerance profiles | `python3 scripts/calibrate.py <control.jsonl> --attest-dir <dir> --out-dir <dir>` | rerun when you like; profiles print N, auto/manual split, and named `graduation_blockers` |
+| Tolerance profiles | `python3 scripts/calibrate.py <control.jsonl> --index /root/minicpm-webapp/baselines/index.json --attest-dir <dir> --out-dir <dir>` | rerun when you like; profiles print N, auto/manual split, and named `graduation_blockers`. `--index` supplies the §7 cohort boundary (also via `$MPW_BASELINE_INDEX` or autodiscovery); with NO resolvable source every profile is `cohort_source_missing` + `not_for_alerting`, never a silent cohort-blind graduation (Quinn's repro, 2026-10-17) |
 | History retention | `python3 monitorlib.py prune --db baselines/runs.db --keep-days 30` (dry-run; add `--apply`) | never deletes evidence rows (non-OK / verdicts / controls) |
 
 Graduation of a tolerance profile now requires ALL axes ok: N≥5 runs, 4

@@ -1,0 +1,17 @@
+# Watcher-watcher: deadline check over TERMINAL heartbeat rows.
+# Answers "is it even watching?" AND "did the watcher get watched?" —
+# exit 1 when any baselined site lacks a heartbeat within cadence+grace.
+# Route its failure somewhere loud, your infra's choice, e.g.:
+#   OnFailure=notify-mail@%n.service   (a unit you already have), or
+#   crontab: ... || /path/to/your/alert.sh "mpw monitor stale"
+# Cadence must match the run timer (hourly run -> 60+30 default is fine).
+# Install alongside minicpm-monitor.{service,timer}; enable its .timer too.
+
+[Unit]
+Description=minicpm-webapp staleness deadline check (fail = scheduler went silent)
+
+[Service]
+Type=oneshot
+Environment=MPW_DIR=/root/minicpm-webapp
+Environment=MPW_PY=python3
+ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py stale --db "$MPW_DIR/baselines/runs.db" --cadence 60 --grace 30 --require-ok'
