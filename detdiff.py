@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 from PIL import Image, ImageChops, ImageStat
 
 BAND_H = 1280
@@ -317,11 +318,20 @@ def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2,
                 _close(); skips["no_mean_grid"] += 1
                 continue
             try:
-                meta = mg if isinstance(mg, dict) else {"b64": mg}
-                raw = base64.b64decode(meta["b64"])
+                meta = mg
+                if isinstance(meta, str):
+                    # REAL rig rows stamp mean_grid as a JSON STRING (same
+                    # wire format as blockmae). A bare b64 string is NOT a
+                    # legal row: falling back to it silently decoded JSON
+                    # stamps as garbage bytes on the first live-ledger run
+                    # (caught on pvellm control.jsonl, Oct-21 18:2x UTC).
+                    meta = json.loads(meta)
+                if not isinstance(meta, dict):
+                    raise ValueError("mean_grid must be dict or JSON dict")
+                raw = base64.b64decode(meta["b64"], validate=True)
                 cols = int(meta.get("cols") or 0)
                 nrow = int(meta.get("rows") or 0)
-                if cols and nrow and cols * nrow != len(raw):
+                if not (cols and nrow) or cols * nrow != len(raw):
                     raise ValueError("grid length contradicts metadata")
             except Exception:
                 _close(); skips["undecodable"] += 1

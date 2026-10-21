@@ -17,6 +17,7 @@ per site — 8 rows give 7 transitions, max run 7. Any plant that wants
 an event must visibly carry 9+ rows per site; do not "simplify" to 8.
 """
 import io
+import json
 
 import pytest
 from PIL import Image
@@ -38,6 +39,32 @@ def _row(key: str, hour: int, luma: int, h: int = 128, grid=True,
     if grid:
         r["mean_grid"] = _grid(luma, h=h)
     return r
+
+
+class TestWireFormat:
+    def test_real_rig_wire_is_json_string_not_dict(self):
+        # The rig stamps mean_grid as a JSON STRING (blockmae wire
+        # format). First live-ledger run caught the decoder treating
+        # that string as raw b64: some sites raised padding errors,
+        # others "decoded" garbage. The corpus must parse the wire form
+        # it actually receives.
+        rows = [_row("s", h, 100 + 2 * h) for h in range(9)]
+        for r in rows:
+            r["mean_grid"] = json.dumps(r["mean_grid"])
+        s = _site(detdiff.persistence_corpus(rows), "s")
+        assert s["status"] == "ok" and s["events"], \
+            "JSON-string mean_grid must decode and scan"
+        assert all(v == 0 for v in s["skipped"].values())
+
+    def test_bare_b64_string_is_not_legal_wire(self):
+        # A grid without cols/rows metadata cannot prove its own shape;
+        # it is an undecodable break, never a silent (0,0,N) epoch.
+        rows = [_row("s", h, 100) for h in range(9)]
+        for r in rows:
+            r["mean_grid"] = r["mean_grid"]["b64"]
+        s = _site(detdiff.persistence_corpus(rows), "s")
+        assert s["usable_rows"] == 0
+        assert s["skipped"]["undecodable"] == 9
 
 
 def _site(out, key):
