@@ -1,6 +1,6 @@
 """Tower-orientation pin (stdlib only; run ON pvellm with MPW_TOWER_PROBE=1).
 
-The Oct-15 receipt (":8080 = 837 tokens = detail") was falsified on
+The Oct-15 receipt (":8080 = 837 tokens = detail") (RETRACTED) was falsified on
 2026-10-17 by two independent same-image probes (489 vs 1851 here; 612 vs
 2304 on Quinn's) and by the GGUF headers the user diffed: the "-4x" file
 (scale_factor=2 => 4x downsample) is the HIGH-detail 256-tok/tile tower;
@@ -67,9 +67,33 @@ def test_static_orientation_labels():
     assert '"16x": "fast"' in app and '"4x": "detail"' in app, "aliases must follow file truth"
     html = (ROOT / "static/index.html").read_text()
     assert "f16 (:8080" in html and "-4x (:8081" in html, "UI labels must name file+port truth"
-    # the falsified receipt strings must not return as live claims
-    for dead in ("837 visual tokens", "~830 visual tokens"):
-        assert dead not in html, f"falsified receipt back in UI: {dead}"
+    # Falsified receipt strings must not return as LIVE claims ANYWHERE —
+    # scope widened at the 2026-10-21 doc lint: the original loop covered
+    # static/index.html only, which is exactly how the inverted comment in
+    # app.py and the 837-claim in DEPLOY.md passed this very file
+    # (detector scope, not detector absence — Quinn/Sammy). Any tracked
+    # .py/.sh/.md line carries the pin; RETRACT-marked lines are exempt,
+    # a bare retracted number outside them fails the gate.
+    dead = tuple(s.replace("~", "~") for s in (  # built via join to keep this detector line exempt
+        "8" + "37 visual tokens", "~8" + "30 visual tokens", "8" + "37 prompt",
+        "= " + "837", "8" + "32 vs 223", "vs -4x = " + "223"))
+    scan = {"app.py": app, "static/index.html": html}
+    for f in sorted(ROOT.rglob("*")):
+        if (".git" in f.parts or ".venv" in f.parts or "__pycache__" in f.parts
+                or f.suffix not in (".py", ".sh", ".md", ".html")
+                or f.name == "uv.lock"):
+            continue
+        scan[str(f.relative_to(ROOT))] = f.read_text(errors="ignore")
+    violations = []
+    for fname, text in scan.items():
+        for ln, line in enumerate(text.splitlines(), 1):
+            if "RETRACT" in line.upper():
+                continue
+            for d in dead:
+                if d in line:
+                    violations.append(f"{fname}:{ln}: {line.strip()[:90]}")
+    assert not violations, ("falsified receipts live (one per line):\n"
+                            + "\n".join(violations))
 
 
 def test_live_tower_orientation():

@@ -22,8 +22,9 @@ The web UI is optional; the entire workflow is available via a REST API.
 > merger *deleted*) → **256 tok/tile → the DETAIL/OCR tower on :8081**.
 > Measured same-image on prod: `:8080`=489 prompt tokens vs `:8081`=1851
 > (Paul) and 612 vs 2304 (Quinn) — the user's header diff predicts 640 vs
-> 2560 for a 9-slice image; ratios match. **RETRACTED:** the 2026-10-15
-> receipt "f16 = 832 vs -4x = 223, f16 is high-detail" — falsified by
+> 2560 for a 9-slice image; ratios match. RETRACTED: the 2026-10-15
+> receipt "f16 = 832 vs -4x = 223, f16 is high-detail" (RETRACTED) —
+> falsified by
 > today's re-measure; whatever produced it does not survive repro, and
 > `tests/test_tower_orientation.py` (live mode: `MPW_TOWER_PROBE=1`) now
 > pins the orientation so it can never ship inverted a third time.

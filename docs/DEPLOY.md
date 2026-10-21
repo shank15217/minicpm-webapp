@@ -94,15 +94,21 @@ The app is a client of two `llama-server` processes; they are NOT installed by
    quant: `GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf ./scripts/start_llama_servers.sh`.
 
    > **Tower naming trap (cost us a wrong-labelled startup script):** `4x` in
-   > this filename means **4x downsample**, i.e. the *coarser* tower.
-   > `mmproj-model-f16.gguf` (no suffix) is the **full-resolution / detail**
-   > tower. Measured on the same 640x480 image: `:8080` (f16) = 837 prompt
-   > tokens, `:8081` (f16-4x) = 228 — ratio ≈ 3.7 ≈ the 4x downscale. If small
-   > text goes undetected, check you are reading the *detail* port.
+   > this filename means **4× downsample** (GGUF `scale_factor=2`) — the
+   > *high-detail* tower. Plain `mmproj-model-f16.gguf` carries
+   > `scale_factor=4` (16× downsample) → the **fast/general** tower.
+   > Measured same-image 2026-10-17: `:8080` (f16) = 489 prompt tokens vs
+   > `:8081` (f16-4x) = 1851 (independent re-measure: 612 vs 2304).
+   > RETRACTED: the callout that previously lived here ("`:8080` = 837
+   > prompt tokens, f16 = detail tower") — falsified by that re-measure +
+   > the GGUF header diff; live pin: `MPW_TOWER_PROBE=1 python3
+   > tests/test_tower_orientation.py`. If small text goes undetected, check
+   > you are reading the *detail* port (`:8081`).
    >
-   > App-facing names are semantic: `mode=detail` → f16, `mode=fast` → f16-4x.
-   > `16x`/`4x` are accepted as deprecated aliases and are mapped in
-   > `app.py:MODE_ALIASES`.
+   > App-facing names are semantic: `mode=detail` → f16-4x (`:8081`),
+   > `mode=fast` → f16 (`:8080`). `16x`/`4x` are accepted as deprecated
+   > aliases and are mapped in `app.py:MODE_ALIASES` (`16x`→fast,
+   > `4x`→detail).
 
 ## Step 3 — Start services
 

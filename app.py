@@ -137,9 +137,15 @@ PROMPT_VERSION = hashlib.sha256(
     (SYSTEM_PROMPT + NARRATION_PROMPT_SINGLE).encode()
 ).hexdigest()[:12]
 
-# Tower semantics: `detail` = full-resolution tower (mmproj-model-f16,
-# ~837 visual tokens on 640x480), `fast` = token-saving downsample tower
-# (mmproj-model-f16-4x, ~228 tokens). `16x`/`4x` are DEPRECATED aliases
+# Tower semantics (corrected 2026-10-21 doc lint against the 2026-10-17
+# re-measure + GGUF headers): `detail` = high-detail tower
+# (mmproj-model-f16-4x, scale_factor=2 → 4× downsample → 256 tok/tile),
+# `fast` = general tower (mmproj-model-f16, scale_factor=4 → 16× downsample
+# → 64 tok/tile). RETRACTED: this block originally claimed
+# "detail = f16 ~837 visual tokens, fast = -4x ~228" (RETRACTED claim) —
+# the pre-re-measure inversion that
+# survived one README "fix"; those numbers do not survive repro.
+# `16x`/`4x` are DEPRECATED aliases
 # (owner ruling 2026-10-15; naming debate settled by the same token
 # measurements — see start_llama_servers.sh header).
 # Alias truth follows the FILE semantics (user-verified GGUF headers
@@ -419,8 +425,8 @@ def narration_crops(ref_bytes: bytes, live_bytes: bytes, det: dict,
                     max_crops: int = 3) -> list:
     """Changed-region crops for the narrator: (label, baseline_url, live_url).
 
-    Sammy/Quinn architecture finding: a full f16-tower page is a huge prompt
-    (837 visual tokens for 640x480; full 1280x7463 pages dominate the
+    Sammy/Quinn architecture finding: a full page on the detail tower is a
+    huge prompt (256 tok/tile; full 1280x7463 pages dominate the
     truncation story) and pairwise same-or-different is corrupted anyway.
     The narrator gets ONLY the bands the deterministic diff flagged, worst
     first, up to max_crops — same pixels a human would open the alert for,
