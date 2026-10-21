@@ -237,12 +237,22 @@ Multipart form-data (`-F`, not JSON).
 |--------------------|----------|--------------|-------------|
 | `file`             | No       | —            | Reference image (optional if baseline exists) |
 | `url`              | No*      | —            | Webpage URL |
-| `mode`             | No       | `"detail"`   | `"detail"` / `"fast"` (legacy aliases `16x`/`4x`) |
+| `mode`             | No       | `"detail"`   | `"detail"` / `"fast"` — see token note below (legacy aliases `16x`→fast, `4x`→detail) |
 | `visual_verify`    | No       | `"true"`     | Capture live screenshot for comparison |
 | `capture_baseline` | No       | `"false"`    | Capture and store live screenshot as baseline |
 | `prompt`           | No       | —            | Custom instruction for the initial description |
 
 \*A URL is required for baseline capture and for verification.
+
+**What `detail` vs `fast` actually means.** MiniCPM's vision projector
+compresses each image tile into visual tokens; the two towers differ only
+in the projector file loaded, i.e. how many pixels one token represents:
+`fast` uses the plain `f16` projector (x16: one visual token per 4×4 pixel
+matrix, ~64 tok/tile — the *less* detailed representation, cheap and
+general), while `detail` uses the `-4x` file (x4: one token per 2×2 pixel
+matrix, ~256 tok/tile — 4× the visual representation, needed for small
+text and OCR grounding). "x16 has less representation than x4" — the
+naming counts pixels per token, not quality.
 
 **Example – capture baseline**
 ```bash
