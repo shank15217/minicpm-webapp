@@ -392,6 +392,138 @@ def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2,
     return out
 
 
+def viability_report(rows: list, min_fires: int = 24,
+                     min_mode_share: float = 23 / 24,
+                     min_blank_share: float = 23 / 24,
+                     min_osc_transitions: int = 4,
+                     flip_rate_osc: float = 0.6) -> dict:
+    """Det-only viability gate (Quinn final spec + Sammy content half)
+    computed BY THE GUARD over the viability ledger itself — no
+    hand-counted numbers graduate a site.
+
+    Input is ordinary ledger rows (real wire: mean_grid/blockmae/
+    capture_sanity as JSON strings or dicts). Per site reports:
+      shape side: fires, mean_grid_fires, shape histogram keyed
+        "colsXrows", mode_share, shape_flips (transitions where the
+        shape state changed);
+      regime side: the set of capture_regime values seen — equality,
+        not a value test (drift off the current lineage is auto-fail,
+        the regime-equality quarantine's lesson);
+      blank side: blank_bands-empty share from capture_sanity;
+      CONTENT side (Sammy): the inverted-polarity sign-run — per block,
+        a flip is a change of sign between consecutive moving deltas
+        (|d| >= min_mag=2); a block with >= min_osc_transitions moving
+        steps and flip_rate >= flip_rate_osc is an OSCILLATOR with its
+        mean |delta|. A shape-stable, content-randomized site can no
+        longer walk the gate into a baseline ceremony: its random block
+        shows up as a pre-registered oscillator line instead of as
+        future mystery drama. Waiver/oscillator pre-marks write
+        themselves out of this report, not out of anyone's memory.
+
+    Graduation is per-site: shape pass = mean_grid_fires >= min_fires
+    AND mode_share >= min_mode_share AND regime_ok AND blank share >=
+    min_blank_share. Content is REPORTED, not gated — oscillators inform
+    ceilings and waivers; they do not fail a site by themselves.
+    """
+    by_site: dict[str, list] = {}
+    for r in rows:
+        if isinstance(r, dict):
+            by_site.setdefault(str(r.get("baseline_key", "")), []).append(r)
+
+    sites, passed, failed = {}, [], {}
+    for key, srows in by_site.items():
+        srows = sorted(srows, key=lambda r: str(r.get("ts", "")))
+        shapes, mg_n = [], 0
+        regimes = set()
+        blank_empty = blank_seen = 0
+        grids = []          # (shape, values) for content floor
+        for r in srows:
+            regimes.add(str(r.get("capture_regime")))
+            cs = r.get("capture_sanity")
+            try:
+                cs = json.loads(cs) if isinstance(cs, str) else cs
+                if isinstance(cs, dict) and "blank_bands" in cs:
+                    blank_seen += 1
+                    if not cs["blank_bands"]:
+                        blank_empty += 1
+            except Exception:
+                pass
+            mg = r.get("mean_grid")
+            if not mg:
+                continue
+            try:
+                meta = json.loads(mg) if isinstance(mg, str) else mg
+                raw = base64.b64decode(meta["b64"], validate=True)
+                cols, nrow = int(meta["cols"]), int(meta["rows"])
+                if cols * nrow != len(raw):
+                    continue
+            except Exception:
+                continue
+            mg_n += 1
+            shapes.append((cols, nrow))
+            grids.append(((cols, nrow), list(raw)))
+
+        hist: dict[str, int] = {}
+        for c, n in shapes:
+            hist[f"{c}X{n}"] = hist.get(f"{c}X{n}", 0) + 1
+        mode_share = (max(hist.values()) / mg_n) if mg_n else 0.0
+        flips = sum(1 for a, b in zip(shapes, shapes[1:]) if a != b)
+        regime_ok = len(regimes) <= 1
+        blank_share = (blank_empty / blank_seen) if blank_seen else 0.0
+
+        # content noise floor: consecutive SAME-SHAPE captures only
+        osc = []
+        prev = None
+        moves: dict[int, list[int]] = {}
+        for (c, n), vals in grids:
+            if prev is not None and (c, n) == prev[0]:
+                for bi in range(len(vals)):
+                    d = vals[bi] - prev[1][bi]
+                    if abs(d) >= 2:
+                        moves.setdefault(bi, []).append(d)
+            prev = ((c, n), vals)
+        for bi, ds in moves.items():
+            if len(ds) < min_osc_transitions:
+                continue
+            fl = sum(1 for a, b in zip(ds, ds[1:]) if (a > 0) != (b > 0))
+            rate = fl / (len(ds) - 1)
+            if rate >= flip_rate_osc:
+                osc.append({"block": bi, "flip_rate": round(rate, 3),
+                            "mean_abs_delta":
+                                round(sum(abs(d) for d in ds) / len(ds), 2)})
+        osc.sort(key=lambda e: -e["flip_rate"])
+
+        reasons = []
+        if mg_n < min_fires:
+            reasons.append(f"mean_grid_fires {mg_n} < {min_fires}")
+        if mg_n and mode_share < min_mode_share:
+            reasons.append(f"mode_share {mode_share:.3f} < {min_mode_share:.3f}"
+                           f" (hist {hist})")
+        if not regime_ok:
+            reasons.append(f"regime drift: {sorted(regimes)}")
+        if blank_seen and blank_share < min_blank_share:
+            reasons.append(f"blank_bands_empty {blank_share:.3f} < "
+                           f"{min_blank_share:.3f}")
+        site = {"fires": len(srows), "mean_grid_fires": mg_n,
+                "shape_hist": hist, "mode_share": round(mode_share, 4),
+                "shape_flips": flips, "regime_set": sorted(regimes),
+                "regime_ok": regime_ok,
+                "blank_bands_empty_share": round(blank_share, 4),
+                "oscillators": osc,
+                "graduates_shape": not reasons}
+        sites[key] = site
+        if reasons:
+            failed[key] = reasons
+        else:
+            passed.append(key)
+    return {"sites": sites, "pass": sorted(passed), "fail": failed,
+            "policy": {"min_fires": min_fires,
+                       "min_mode_share": round(min_mode_share, 4),
+                       "min_blank_share": round(min_blank_share, 4),
+                       "oscillator": {"min_transitions": min_osc_transitions,
+                                      "flip_rate": flip_rate_osc}}}
+
+
 def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
     """Suspicion events from consecutive live block-mean grids: a block
     whose signed live↔live delta keeps the SAME SIGN for >= min_run
