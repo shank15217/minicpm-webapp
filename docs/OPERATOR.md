@@ -85,7 +85,7 @@ regardless of which version you're on.
 ### A2. Vision towers (only when you relaunch them — decision included)
 Corrected semantics (README's old text was inverted; fixed in `888286d` —
 this very line was ALSO inverted until the 2026-10-21 doc lint; the truth is
-`app.py:149` MODE_ALIASES + `:8080`=f16/fast vs `:8081`=-4x/detail):
+`app.py:149` MODE_ALIASES + `:8080`=f16/fast, `:8081`=-4x/detail):
 **fast = f16 mmproj = :8080 · detail = -4x file = :8081.**
 ```bash
 MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh

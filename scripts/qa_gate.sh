@@ -195,6 +195,14 @@ if [ "$pos_fail" -ne 0 ]; then
     exit 1
 fi
 
+# Clause 8: doc-vs-code lint (Quinn spec, QA-REPORT-7) — dead receipt
+# figures, fact-table alias inversions (number-free class greps can't see),
+# phantom path cites, pyproject/tag version skew. Non-server, fast, runs
+# before clause 7 so a release never tags over a doc lie. Default mode allow-lists exactly the regime_filter.py cites pending
+# the v0.6 reconciliation; `--strict` (acceptance mode) does not.
+echo "== clause 8: doc-vs-code lint"
+bash scripts/doc_lint.sh || { echo "== gate FAILED: doc_lint (see violations above)"; exit 1; }
+
 # Clause 7: check-then-tag order enforced by construction. If the caller
 # declares a candidate release tag, the gate ENDS with that tag's
 # tag_check ritual (mark-removal checks; test tier skipped — this gate run

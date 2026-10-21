@@ -119,7 +119,7 @@ model/tower tuple for factual grounding (name objects present; verdict language
 in narration is an instrument violation — file a defect). `detail` tower
 (`-4x` file, 256 tok/tile, :8081) for narration; `fast` (f16, 64 tok/tile,
 :8080) triage only. [Orientation corrected 2026-10-21 doc lint against the
-measured re-measure of 2026-10-17; the "f16 = detail ≈833 tok" text here was
+measured re-measure of 2026-10-17; the "f16 = detail ≈833 tok" (RETRACTED) text here was
 the RETRACTED mapping.]
 
 ## 6. Storage gap (blocks §2 implementation) — owner: code owner
