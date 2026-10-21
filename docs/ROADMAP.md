@@ -34,11 +34,17 @@ open W in the RUNBOOK ledger or a doc-lint finding (DOC-LINT-2026-10-21.md).
    global + narration (accepted doctrine). Gate: Quinn's acceptance fixture
    (planted movers + real careers/governance drama rows), per-block quiet
    spec, byte-identity assertions.
-2. **Cadence bump + `capture_surface` row wiring** — already batched,
-   waiting only on the 10:00 UTC steady-state verdict (freeze protocol).
+2. **Cadence bump + `capture_surface` row wiring** — LANDED 2026-10-21 on
+   the steady-state audit PASS (Quinn, MINICPM-QA-REPORT-8): control cron is
+   hourly on pvellm and runs the repo rig directly (the stale
+   `/root/mpw-calibration/control_batch.py` copy is retired in place), so
+   every row carries `capture_surface` AND a `mean_grid`; mean-grid corpus
+   counting starts at the first hourly fire.
 3. **Persistence clause graduates from spec**: ≥8 consecutive mean-grid
    rows, then first honest `persistence_events()` number on real cohort;
-   sign-run detector + planted-63-mover fixture. Honest state until then:
+   sign-run detector + planted-63-mover fixture. Consumer guard shipped:
+   `detdiff.persistence_corpus()` answers `"insufficient_corpus"` for
+   corpus rows 1–7 — never a bare empty list. Honest state until then:
    schema-complete, trained on nothing.
 4. **Per-block quiet final ruling** (Paul's starvation caveat vs Quinn's
    literal row-level spec) — implement whichever the gate owner signs.

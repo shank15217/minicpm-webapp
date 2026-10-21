@@ -224,6 +224,32 @@ def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
             "b64": base64.b64encode(bytes(vals)).decode()}
 
 
+def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2) -> dict:
+    """Consumer-side corpus guard (qa-40, Quinn's row-shape rule): rows are
+    cohort dicts as read from the control ledger; only rows carrying a
+    `mean_grid` count. While fewer than `min_run` mean-grid rows exist the
+    honest answer is status="insufficient_corpus" with a human-readable
+    `message` — NEVER a bare empty list a dashboard could read as
+    "checked, nothing found". At >= min_run rows: status="ok" plus the
+    detector's events. Scope law unchanged (eb7d0bb): mean grids never
+    enter a change verdict; MAE grid stays the ceiling source."""
+    grids = []
+    for r in rows:
+        mg = r.get("mean_grid") if isinstance(r, dict) else None
+        if not mg:
+            continue
+        raw = mg["b64"] if isinstance(mg, dict) else mg
+        grids.append(list(base64.b64decode(raw)))
+    if len(grids) < min_run:
+        return {"status": "insufficient_corpus", "rows": len(grids),
+                "need": min_run, "events": [],
+                "message": f"insufficient corpus: {len(grids)} mean-grid "
+                           f"row(s), need {min_run} — no persistence verdict"}
+    return {"status": "ok", "rows": len(grids), "need": min_run,
+            "events": persistence_events(grids, min_run=min_run,
+                                         min_mag=min_mag)}
+
+
 def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
     """Suspicion events from consecutive live block-mean grids: a block
     whose signed live↔live delta keeps the SAME SIGN for >= min_run

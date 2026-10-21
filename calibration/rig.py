@@ -65,6 +65,11 @@ async def main():
                     _bm = json.dumps(detdiff.block_mae_shadow(png.read_bytes(), shot))
                 except Exception:
                     _bm = None
+                try:  # mean grid (persistence corpus; LIVE luma, no baseline)
+                    # — schema-only, never enters a verdict; never breaks batch
+                    _mg = json.dumps(detdiff.block_mean_grid(shot))
+                except Exception:
+                    _mg = None
                 row = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),
                        "window": win, "trigger": TRIGGER, "kind": "control", "baseline_key": key, "url": url,
                        "baseline_sha": hashlib.sha256(png.read_bytes()).hexdigest(),
@@ -72,6 +77,7 @@ async def main():
                        "capture_regime": CAPTURE_REGIME, "app_commit": APP_COMMIT,
                        "capture_sanity": json.dumps({"blank_bands": _blank_bands(shot)}),
                        "blockmae": _bm,
+                       "mean_grid": _mg,
                        "capture_surface": _surface(),
                        **d}
                 with OUT.open("a") as f: f.write(json.dumps(row) + "\n")
