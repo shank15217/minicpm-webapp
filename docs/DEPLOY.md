@@ -10,10 +10,11 @@ through **uv**; never use `python -m pip` (uv venvs contain no pip — verified 
 ## Architecture recap
 
 ```
-client ──▶ FastAPI app (port 8000) ──▶ llama-server :8080 (detail: mmproj-model-f16,
-                 │                            full-res, ~837 visual tokens / 640x480)
-                 │                 └──▶ llama-server :8081 (fast: mmproj-model-f16-4x,
-                 │                            4x downsample, ~228 tokens — cheaper, coarser)
+client ──▶ FastAPI app (port 8000) ──▶ llama-server :8080 (fast: mmproj-model-f16,
+                 │                            16× downsample, ~64 visual tok/tile —
+                 │                            general serving, cheaper)
+                 │                 └──▶ llama-server :8081 (detail: mmproj-model-f16-4x,
+                 │                            4× downsample, ~256 tok/tile — OCR/grounding)
                  └─▶ detdiff (deterministic band diff: owns the verdict, no GPU)
                  └─▶ Playwright Chromium (headless, full-page screenshots)
                  └─▶ baselines/  (PNG + index.json; gitignored runtime data)

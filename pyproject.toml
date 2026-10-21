@@ -1,6 +1,6 @@
 [project]
 name = "minicpm-webapp"
-version = "0.2.1"
+version = "0.5.1"
 description = "Synthetic website health monitor: Playwright screenshots + MiniCPM-V (llama.cpp) visual verification with confidence scoring against a captured baseline"
 readme = "README.md"
 requires-python = ">=3.10"

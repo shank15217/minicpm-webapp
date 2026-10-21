@@ -206,7 +206,8 @@ LLAMA_SERVER_4X     # deprecated alias of DETAIL (same endpoint)
 
 Defaults match the launch commands above; set them only when the towers run
 on a different host. (Variable names keep the legacy `16X/4X` spelling;
-semantically `16X`=detail, `4X`=fast.)
+semantically `16X`=**fast**, `4X`=**detail** — per `MODE_ALIASES`, `app.py:149`;
+an earlier revision of this line had it inverted.)
 
 ## Usage
 
@@ -278,7 +279,7 @@ Delete the directory or individual files to reset baselines (back up first — W
 ## Limitations & Notes
 
 Short version — the full ledger with receipts and measured numbers lives in
-**[docs/RUNBOOK.md](docs/RUNBOOK.md) §3 (W1–W11)**. Highlights:
+**[docs/RUNBOOK.md](docs/RUNBOOK.md) §3 (W1–W12 + W5b)**. Highlights:
 
 - Sub-~1%-area edits pass the pixel threshold (W1).
 - Dynamic (rotating) bands are pixel-noisy in **both** directions; do not page
@@ -297,6 +298,9 @@ Short version — the full ledger with receipts and measured numbers lives in
   middleware before anything beyond a trusted network.
 
 ## Future Ideas
+
+Superseded by **[docs/ROADMAP.md](docs/ROADMAP.md)** (v0.5.1→1.0 plan,
+2026-10-21). Historical list:
 
 - Multi-page or multi-URL batch verification
 - Screenshot diff visualization

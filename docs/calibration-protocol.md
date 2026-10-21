@@ -116,8 +116,11 @@ project exists to prevent; better a published floor than a discovered one.
 ## 5. Narrator qualification (single-image only)
 `NARRATION_PROMPT_SINGLE` on located crops; QA spot-grades ≥ 10 narrations per
 model/tower tuple for factual grounding (name objects present; verdict language
-in narration is an instrument violation — file a defect). `detail` tower (f16,
-~833 tok/640×480 img) for narration; `fast` (-4x, ~224 tok) triage only.
+in narration is an instrument violation — file a defect). `detail` tower
+(`-4x` file, 256 tok/tile, :8081) for narration; `fast` (f16, 64 tok/tile,
+:8080) triage only. [Orientation corrected 2026-10-21 doc lint against the
+measured re-measure of 2026-10-17; the "f16 = detail ≈833 tok" text here was
+the RETRACTED mapping.]
 
 ## 6. Storage gap (blocks §2 implementation) — owner: code owner
 `run_history.det_similarity` stores the page MIN only. Calibration math needs
