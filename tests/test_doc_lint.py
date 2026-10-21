@@ -98,3 +98,84 @@ def test_version_skew_detector():
     """planted skew fires; current tree is green until the next tag lands."""
     cur = doc_lint.version_skew()
     assert cur == [], f"HEAD version skew is real, not planted: {cur}"
+
+
+# ---- gap round at 8c2c5f4 (Sammy gaps 1-5, Quinn count-pin + strip spec) ----
+
+def test_gap1_table_row_window_fires_controls_silent():
+    """Table rows bind by cell-ADJACENCY: window = whole row. Cell-splitting
+    would leave every cell alone and every table inversion would silently
+    self-silence — the fake-green trap Sammy named."""
+    planted = "| " + "fast | -4" + "x | :808" + "1 |\n"
+    v = doc_lint.alias_inversions("planted.md", planted, facts())
+    assert len(v) == 1, f"table inversion walked: {v}"
+    for ok in ("| fast | 64 tok/tile |\n",                       # true row
+               "| " + "detail | -" + "4x | :808" + "1 |\n",      # true row
+               "| cost | $2.10 |\n"):                            # no mode
+        assert doc_lint.alias_inversions("ok.md", ok, facts()) == [], f"FP row: {ok}"
+
+
+def test_gap2_portless_file_mode_inversion_fires():
+    """Same-class prose as DEPLOY:103 minus the port token: the file marker
+    claims its side; the nearest subject must match it."""
+    planted = "the -4" + "x file is the fast tower.\n"
+    v = doc_lint.alias_inversions("planted.md", planted, facts())
+    assert len(v) == 1, f"portless inversion walked: {v}"
+    ok = "the -4" + "x file is the detail tower.\n"              # TRUE
+    assert doc_lint.alias_inversions("ok.md", ok, facts()) == []
+
+
+def test_gap4_retract_strip_closes_laundering():
+    """Quinn formulation: on RETRACT-marked lines run the detector over the
+    line with quoted/backticked spans STRIPPED — a bare assertion survives
+    stripping and fires; a cited retraction dissolves."""
+    claim = "detail = f1" + "6 = :808" + "0 is the routing.\n"
+    assert len(doc_lint.alias_inversions("b1.md", claim, facts())) == 1
+    b2 = doc_lint.alias_inversions("b2.md", "RETRACT-context and " + claim, facts())
+    assert len(b2) == 1, f"Bare assertion laundered by the word RETRACT: {b2}"
+    # the assertive TAIL keeps its binding after the citation is stripped:
+    tail = ("RETRACT: the doc said `detail = f1" + "6 = :808" + "0`,"
+            " so send OCR traffic to :808" + "0\n")
+    assert len(doc_lint.alias_inversions("tail.md", tail, facts())) == 1, \
+        "laundered tail walked the strip rule"
+    # lawful shape: the dead claim is CITED and no live binding remains —
+    # double-quotes here would resurrect the dead-receipt string, so cite
+    # retractions in backticks (the shape DEPLOY:102 now uses)
+    cite = ("RETRACTED: the old callout said `detail = f1" + "6 = :808" + "0`"
+            " \u2014 falsified 2026-10-17\n")
+    assert doc_lint.alias_inversions("ok.md", cite, facts()) == []
+
+
+def test_gap5_alias_keys_resolve_with_binding_context():
+    """All six MODE_ALIASES keys are subjects, not just fast/detail — but
+    ambiguous English keys (general/ocr/bare 4x) only fire with a wrong-side
+    claim or cross-name copula in the window: no wolf, no policy override."""
+    for planted in ("mode=ocr routes to :808" + "0\n",
+                    "the 4" + "x mode is the fast tower\n"):
+        v = doc_lint.alias_inversions("planted.md", planted, facts())
+        assert len(v) == 1, f"alias inversion walked: {planted}"
+    for ok in ("a general speedup of 2x\n",
+               "OCR traffic to :808" + "1 is expected\n",   # TRUE binding
+               "mode=detail routes to :808" + "1\n",        # TRUE, F1 control
+               "ocr the receipt, then file it\n"):
+        assert doc_lint.alias_inversions("ok.md", ok, facts()) == [], f"FP: {ok}"
+
+
+def test_count_scoped_allowlist_closes_laundering_window():
+    """Quinn gap 3: the regime_filter.py allowance is AT MOST 2 hits; a new
+    cite in any doc fails the gate on the surplus."""
+    two = ["docs/a.md:1: cites 'scripts/regime_filter.py' (phantom)",
+           "docs/b.md:9: cites 'scripts/regime_filter.py' (phantom)"]
+    assert doc_lint.apply_allowlist(two) == []
+    three = two + ["docs/new.md:2: cites 'regime_filter.py' (phantom)"]
+    assert any("EXCEEDED" in o for o in doc_lint.apply_allowlist(three))
+
+
+def test_sinc1_declared_scope_boundary_known_silent():
+    """Sammy SINC-1: no per-line rule distinguishes a sincere RETRACT marker
+    from an insincere one. This plant stays silent BY DESIGN and the test
+    pins that design: RETRACT-marked lines are diff-review surface. If you
+    'fix' this, you have started the prose war that kills the gate."""
+    sinc = ("RETRACTION OF MY EARLIER DOUBT: `detail = f1" + "6 = :808" + "0`"
+            " stands.\n")
+    assert doc_lint.alias_inversions("sinc.md", sinc, facts()) == []

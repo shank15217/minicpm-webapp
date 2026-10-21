@@ -99,8 +99,8 @@ The app is a client of two `llama-server` processes; they are NOT installed by
    > `scale_factor=4` (16× downsample) → the **fast/general** tower.
    > Measured same-image 2026-10-17: `:8080` (f16) = 489 prompt tokens vs
    > `:8081` (f16-4x) = 1851 (independent re-measure: 612 vs 2304).
-   > RETRACTED: the callout that previously lived here ("`:8080` = 837
-   > prompt tokens, f16 = detail tower" — RETRACTED claim quote) — falsified by that re-measure +
+   > RETRACTED: the callout that previously lived here (`:8080 = 837 prompt
+   > tokens, f16 = detail tower`) — quoted retraction, falsified by
    > the GGUF header diff; live pin: `MPW_TOWER_PROBE=1 python3
    > tests/test_tower_orientation.py`. If small text goes undetected, check
    > you are reading the *detail* port (`:8081`).
