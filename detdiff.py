@@ -225,6 +225,110 @@ def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
             "b64": base64.b64encode(bytes(vals)).decode()}
 
 
+def _walk_epochs(parsed, max_gap):
+    """Partition one site's ts-sorted (t, row) pairs into mean-grid
+    epochs. Laws (Sammy round, owned here not by callers): missing grid
+    closes the epoch (no_mean_grid); undecodable/contradicting metadata
+    closes it (undecodable); unparseable ts closes it (no_ts); shape
+    change closes it (shape_break); baseline_sha change closes it
+    (repin_break — block indices are relative to the baseline); a ts gap
+    > max_gap closes it (gap_break — schedule-splice laundering).
+    Returns (epochs [(shape, grids, start_iso, bsha)], skips dict)."""
+    epochs = []
+    skips = {"no_mean_grid": 0, "undecodable": 0, "shape_break": 0,
+             "repin_break": 0, "gap_break": 0, "no_ts": 0}
+    cur = None            # [shape, grids, start_ts, bsha]
+    prev_t = None
+
+    def _close():
+        nonlocal cur
+        if cur is not None:
+            epochs.append(cur)
+            cur = None
+
+    for t, r in parsed:
+        mg = r.get("mean_grid")
+        if mg is None:                      # row present, grid absent
+            _close(); skips["no_mean_grid"] += 1
+            continue
+        try:
+            meta = mg
+            if isinstance(meta, str):
+                # REAL rig rows stamp mean_grid as a JSON STRING (same
+                # wire format as blockmae). A bare b64 string is NOT a
+                # legal row: falling back to it silently decoded JSON
+                # stamps as garbage bytes on the first live-ledger run
+                # (caught on pvellm control.jsonl, Oct-21 18:2x UTC).
+                meta = json.loads(meta)
+            if not isinstance(meta, dict):
+                raise ValueError("mean_grid must be dict or JSON dict")
+            raw = base64.b64decode(meta["b64"], validate=True)
+            cols = int(meta.get("cols") or 0)
+            nrow = int(meta.get("rows") or 0)
+            if not (cols and nrow) or cols * nrow != len(raw):
+                raise ValueError("grid length contradicts metadata")
+        except Exception:
+            _close(); skips["undecodable"] += 1
+            continue
+        if t is None:                       # unorderable -> no epoch
+            _close(); skips["no_ts"] += 1
+            continue
+        shape = (cols, nrow, len(raw))
+        bsha = r.get("baseline_sha")
+        if cur is not None:
+            if shape != cur[0]:
+                _close(); skips["shape_break"] += 1
+            elif bsha and cur[3] and bsha != cur[3]:
+                # re-pin boundary: block indices are relative to the
+                # baseline, so a new baseline starts a new corpus
+                _close(); skips["repin_break"] += 1
+            elif max_gap and prev_t and \
+                    (t - prev_t).total_seconds() > max_gap:
+                _close(); skips["gap_break"] += 1
+        if cur is None:
+            cur = (shape, [], t.isoformat().replace("+00:00", "Z"), bsha)
+            epochs.append(cur)
+        cur[1].append(list(raw))
+        prev_t = t
+    return epochs, skips
+
+
+def _parse_sort_gap(rows, expected_interval_s=None):
+    """Shared corpus/shadow setup: group by baseline_key, parse ts,
+    sort, derive max_gap (3 x expected, else 3 x median of the site's
+    own positive spacings). Returns {key: (parsed, max_gap)}."""
+    import datetime as _dt
+    by_site: dict[str, list] = {}
+    for r in rows:
+        if isinstance(r, dict):
+            by_site.setdefault(str(r.get("baseline_key", "")), []).append(r)
+    out = {}
+    for key, srows in by_site.items():
+        parsed = []
+        for r in srows:
+            ts = r.get("ts")
+            try:
+                t = (_dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                     if ts else None)
+            except ValueError:
+                t = None
+            parsed.append((t, r))
+        parsed.sort(key=lambda x: (x[0] is None, x[0]))
+        ts_all = [t for t, _ in parsed if t is not None]
+        spacings = [(b - a).total_seconds()
+                    for a, b in zip(ts_all, ts_all[1:])
+                    if (b - a).total_seconds() > 0]
+        if expected_interval_s:
+            max_gap: float | None = 3.0 * expected_interval_s
+        elif spacings:
+            srt = sorted(spacings)
+            max_gap = 3.0 * srt[len(srt) // 2]
+        else:
+            max_gap = None  # single row: no schedule to launder against
+        out[key] = (parsed, max_gap)
+    return out
+
+
 def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2,
                        expected_interval_s: float | None = None) -> dict:
     """Per-site persistence corpus (Sammy/Quinn attack round, same day as
@@ -268,95 +372,11 @@ def persistence_corpus(rows: list, min_run: int = 8, min_mag: int = 2,
     Scope law unchanged (eb7d0bb): mean grids never enter a change
     verdict; the MAE grid stays the ceiling source.
     """
-    import datetime as _dt
-    by_site: dict[str, list] = {}
-    for r in rows:
-        if isinstance(r, dict):
-            by_site.setdefault(str(r.get("baseline_key", "")), []).append(r)
-
     sites: dict[str, dict] = {}
     total_breaks = 0
-    for key, srows in by_site.items():
-        parsed = []
-        for r in srows:
-            ts = r.get("ts")
-            try:
-                t = (_dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-                     if ts else None)
-            except ValueError:
-                t = None
-            parsed.append((t, r))
-        parsed.sort(key=lambda x: (x[0] is None, x[0]))
-
-        ts_all = [t for t, _ in parsed if t is not None]
-        spacings = [(b - a).total_seconds()
-                    for a, b in zip(ts_all, ts_all[1:])
-                    if (b - a).total_seconds() > 0]
-        if expected_interval_s:
-            max_gap: float | None = 3.0 * expected_interval_s
-        elif spacings:
-            srt = sorted(spacings)
-            max_gap = 3.0 * srt[len(srt) // 2]
-        else:
-            max_gap = None  # single row: no schedule to launder against
-
-        epochs: list[tuple[tuple, list, object, object]] = []
-        skips = {"no_mean_grid": 0, "undecodable": 0, "shape_break": 0,
-                 "repin_break": 0, "gap_break": 0, "no_ts": 0}
-        cur = None            # [shape, grids, start_ts]
-        prev_t = None
-
-        def _close():
-            nonlocal cur
-            if cur is not None:
-                epochs.append(cur)
-                cur = None
-
-        for t, r in parsed:
-            mg = r.get("mean_grid")
-            if mg is None:                      # row present, grid absent
-                _close(); skips["no_mean_grid"] += 1
-                continue
-            try:
-                meta = mg
-                if isinstance(meta, str):
-                    # REAL rig rows stamp mean_grid as a JSON STRING (same
-                    # wire format as blockmae). A bare b64 string is NOT a
-                    # legal row: falling back to it silently decoded JSON
-                    # stamps as garbage bytes on the first live-ledger run
-                    # (caught on pvellm control.jsonl, Oct-21 18:2x UTC).
-                    meta = json.loads(meta)
-                if not isinstance(meta, dict):
-                    raise ValueError("mean_grid must be dict or JSON dict")
-                raw = base64.b64decode(meta["b64"], validate=True)
-                cols = int(meta.get("cols") or 0)
-                nrow = int(meta.get("rows") or 0)
-                if not (cols and nrow) or cols * nrow != len(raw):
-                    raise ValueError("grid length contradicts metadata")
-            except Exception:
-                _close(); skips["undecodable"] += 1
-                continue
-            if t is None:                       # unorderable -> no epoch
-                _close(); skips["no_ts"] += 1
-                continue
-            shape = (cols, nrow, len(raw))
-            bsha = r.get("baseline_sha")
-            if cur is not None:
-                if shape != cur[0]:
-                    _close(); skips["shape_break"] += 1
-                elif bsha and cur[3] and bsha != cur[3]:
-                    # re-pin boundary: block indices are relative to the
-                    # baseline, so a new baseline starts a new corpus
-                    _close(); skips["repin_break"] += 1
-                elif max_gap and prev_t and \
-                        (t - prev_t).total_seconds() > max_gap:
-                    _close(); skips["gap_break"] += 1
-            if cur is None:
-                cur = (shape, [], t.isoformat().replace("+00:00", "Z"), bsha)
-                epochs.append(cur)
-            cur[1].append(list(raw))
-            prev_t = t
-
+    for key, (parsed, max_gap) in _parse_sort_gap(
+            rows, expected_interval_s).items():
+        epochs, skips = _walk_epochs(parsed, max_gap)
         events = []
         for _shape, grids, start, _bsha in epochs:
             if len(grids) >= 2:
@@ -522,6 +542,126 @@ def viability_report(rows: list, min_fires: int = 24,
                        "min_blank_share": round(min_blank_share, 4),
                        "oscillator": {"min_transitions": min_osc_transitions,
                                       "flip_rate": flip_rate_osc}}}
+
+
+def persistence_events_ratio_net(grids: list, min_run: int = 8,
+                                 min_mag: int = 2, window: int = 16,
+                                 ratio_req: float = 0.8,
+                                 net_req: int = 8) -> list:
+    """SHADOW law (not shipped into any verdict): Quinn's ratio+net
+    composite over sliding windows, with Sammy's velocity-floor law
+    documented as scope, not a bug to fix.
+
+        event := nonzero_steps >= min_run within a `window`-transition
+                 window  AND  ( same-sign ratio >= ratio_req
+                                OR |Σ window Δ| >= net_req )
+
+    * `ratio` term closes Sammy's duty-cycle hole (a zero delta is
+      NEUTRAL — rest hours no longer reset anything);
+    * `net` term closes Quinn's biased-sawtooth hole (+3,-2,... has
+      ratio 0.5 forever but Σ=+8 per 16 transitions);
+    * Σ sums ALL deltas (telescoping displacement — velocity per
+      Sammy), so sub-min_mag steps still count toward the net; the
+      nonzero_steps gate is the noise floor for the ratio term.
+
+    VELOCITY FLOOR (Sammy, structural to the whole law FAMILY):
+    displacement under ~net_req/window per row — e.g. +1 every fourth
+    row — is SILENT under run, ratio, and net alike (Σ<8 per window and
+    nonzero_steps<8), and any further `or` only moves the constant.
+    Slow drift is CUMULATIVE prey: it belongs to per-block ceilings
+    against the baseline (v0.7, unshipped), and nothing between here
+    and there covers it. Do NOT "fix" this detector to eat its own
+    layer's output — plant sub_velocity_known_silent guards it.
+
+    Oscillation is silent by CONSTRUCTION on the net term (zero-net),
+    not by threshold tuning: an unbiased oscillator can never clear it.
+
+    Every event carries its `term` ("ratio" | "net") — Quinn's
+    consumer law: a `net` event on a rotator and a `ratio` event on a
+    static page are not the same accusation, and cross-check-before-
+    celebrating weighs evidence per class. One event per block per term
+    (first firing window only); same partition law as
+    persistence_events: one site, one shape, one adjacent epoch, else
+    ValueError.
+    """
+    if grids and any(len(g) != len(grids[0]) for g in grids):
+        raise ValueError("persistence_events_ratio_net: mismatched grid "
+                         "shapes in one stream — partition first")
+    if len(grids) < 2:
+        return []
+    events = []
+    for bi in range(len(grids[0])):
+        ds = [grids[t][bi] - grids[t - 1][bi] for t in range(1, len(grids))]
+        fired = set()
+        for s in range(0, len(ds) - window + 1):
+            win = ds[s:s + window]
+            nz = [d for d in win if abs(d) >= min_mag]
+            if len(nz) < min_run:
+                continue
+            pos = sum(1 for d in nz if d > 0)
+            neg = len(nz) - pos
+            net = sum(win)
+            if "ratio" not in fired and max(pos, neg) / len(nz) >= ratio_req:
+                fired.add("ratio")
+                events.append({"block": bi, "term": "ratio",
+                               "sign": 1 if pos > neg else -1,
+                               "pos": pos, "neg": neg, "nz": len(nz),
+                               "window_start_idx": s})
+            if "net" not in fired and abs(net) >= net_req:
+                fired.add("net")
+                events.append({"block": bi, "term": "net",
+                               "sign": 1 if net > 0 else -1,
+                               "net_sum": net,
+                               "window_start_idx": s})
+    return events
+
+
+def persistence_shadow(rows: list, min_run: int = 8, min_mag: int = 2,
+                       window: int = 16, ratio_req: float = 0.8,
+                       net_req: int = 8) -> dict:
+    """Side-by-side SHADOW table over one ledger: shipped run-law vs
+    ratio-only vs ratio+net, over IDENTICAL epochs (same partition,
+    same skip accounting — _walk_epochs), zero new captures.
+
+    Purpose (Sammy/Quinn shadow-run protocol): if the ratio or net term
+    produces an event the shipped run law missed on a REAL site, that
+    is a cohort true/false-positive candidate priced for free — the
+    cohort's numbers, not anyone's aesthetics, decide whether a term
+    ships. Per-site output:
+      {"rows", "epochs", "events": {"run": [...], "ratio": [...],
+                                    "net": [...]}}
+    run events keep persistence_events' schema; ratio/net events carry
+    their `term`. This table never produces a verdict; mean grids never
+    enter a change verdict (Persistence Law unchanged)."""
+    sites = {}
+    for key, (parsed, max_gap) in _parse_sort_gap(rows).items():
+        epochs, _skips = _walk_epochs(parsed, max_gap)
+        ev: dict[str, list] = {"run": [], "ratio": [], "net": []}
+        for _shape, grids, start, _bsha in epochs:
+            if len(grids) < 2:
+                continue
+            for e in persistence_events(grids, min_run=min_run,
+                                        min_mag=min_mag):
+                e["epoch_start"] = start
+                ev["run"].append(e)
+            for e in persistence_events_ratio_net(
+                    grids, min_run=min_run, min_mag=min_mag, window=window,
+                    ratio_req=ratio_req, net_req=net_req):
+                e["epoch_start"] = start
+                ev[e["term"]].append(e)
+        sites[key] = {"rows": len(parsed),
+                      "epochs": len([1 for _s, g, _t, _b in epochs
+                                     if len(g) >= 2]),
+                      "events": ev}
+    return {"sites": sites,
+            "law": {"run": f"consecutive same-sign run >= {min_run}",
+                    "ratio": f"window {window}: nz>={min_run} ∧ "
+                             f"same-sign>={ratio_req}",
+                    "net": f"window {window}: nz>={min_run} ∧ |ΣΔ|>={net_req}"},
+            "scope_note": "sub-velocity drift (<net_req/window net, "
+                          "<min_run nonzero steps) is OUT OF SCOPE by "
+                          "construction for every window law — cumulative-"
+                          "layer (v0.7 ceilings) prey, not a clean result"}
 
 
 def persistence_events(grids: list, min_run: int = 8, min_mag: int = 2) -> list:
