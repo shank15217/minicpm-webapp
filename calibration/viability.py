@@ -25,15 +25,10 @@ import datetime
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import rig  # import-safe (main guarded); reuses its capture constants
-import detdiff
-from playwright.async_api import async_playwright
-
-LEDGER = os.environ.get("MPW_VIABILITY_LEDGER",
-                        "/root/mpw-calibration/viability.jsonl")
 
 # @user-approved candidates 2026-10-21, one role each:
 CANDIDATES = [
@@ -43,6 +38,23 @@ CANDIDATES = [
     {"name": "applhero", "url": "https://www.apple.com/"},       # hero rotator
     {"name": "wikport", "url": "https://www.wikipedia.org/"},    # quasi-static
 ]
+
+# S2 gate parity: the default-deny allowlist refused all five documents on
+# the first smoke fire (honest aborts, error rows, no grids — observed live).
+# The viability list IS this runner's operator-approved target set, so the
+# process-scoped env is derived from CANDIDATES itself: nothing approved
+# here is reachable that isn't on the list, every check_target protection
+# (verbatim hosts, metadata-class refusal, rebinding scan) still runs, and
+# the production rig/app keep their own default untouched.
+os.environ["MPW_ALLOW_TARGETS"] = ",".join(
+    urlparse(c["url"]).hostname for c in CANDIDATES)
+
+import rig  # import-safe (main guarded); reuses its capture constants
+import detdiff
+from playwright.async_api import async_playwright
+
+LEDGER = os.environ.get("MPW_VIABILITY_LEDGER",
+                        "/root/mpw-calibration/viability.jsonl")
 
 
 def _ts() -> str:
