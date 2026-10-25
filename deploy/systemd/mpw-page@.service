@@ -1,0 +1,34 @@
+# Pager template (W11 page-routing half — closes weak point #1 once the
+# operator picks a channel). Instantiated with the FAILING unit:
+#   [Unit] OnFailure=mpw-page@%n.service
+# Configuration lives in /etc/mpw-page.env (operator-owned, 0600):
+#   MPW_PAGE_URL=https://ntfy.example.tld/secret-topic   # any POST endpoint
+#   MPW_PAGE_TOKEN=<optional bearer token>
+# ntfy, a TG bot sendMessage, or any webhook-compatible sink is ONE POST.
+#
+# HONESTY RULES (this room's own class list):
+# - NOT configured = fail LOUD (exit 1 + named journal line), never a
+#   silent no-op: a pager that shrugs is the journald-only problem wearing
+#   a pager costume.
+# - The pager's own failure has no pager (infinite regress); the floor is
+#   that mpw-page@ failures appear in `systemctl --failed` — the periodic
+#   human glance is the last resort and the README says so.
+# - Definition of non-silent (ROADMAP v1.0 clause): a green is non-silent
+#   only if this same unit would have fired had the verdict been red.
+
+[Unit]
+Description=page for failed unit %i
+# no After= — must run regardless of network-online state; endpoints that
+# need DNS just fail loud and get noticed via --failed.
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/mpw-page.env
+ExecStart=/bin/sh -c '\
+  if [ -z "$MPW_PAGE_URL" ]; then \
+    echo "mpw-page: PAGER NOT CONFIGURED for failure of %i — set MPW_PAGE_URL in /etc/mpw-page.env"; \
+    exit 1; \
+  fi; \
+  msg="mpw ALERT: unit %i failed on $(hostname) at $(date -u +%FT%TZ); see: journalctl -u %i -n 50"; \
+  curl -fsS -m 15 -H "Title: minicpm-webapp alert" ${MPW_PAGE_TOKEN:+-H "Authorization: Bearer $MPW_PAGE_TOKEN"} \
+       -d "$msg" "$MPW_PAGE_URL" && echo "mpw-page: paged for %i"'

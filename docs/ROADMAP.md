@@ -35,12 +35,23 @@ boundary-row quiet check (H₀=2560, lower-once to 2048); ceiling fit
 plant-order receipt chain (green→plant→RED→green) per HANDOFF-10.
 
 **v1.0 distance, honestly:** the 30-day watched-with-zero-silent-green
-clock started ~Oct 25 (watcher install day) → earliest honest RC is
-late November even if every gated item lands this week. Backup/restore
+clock started ~Oct 25 (watcher install day). SAMMY CORRECTION (Oct-25,
+adopted): with journald-only alerting a red that pages nobody is
+indistinguishable from an unaudited green, so a window elapsed BEFORE
+the pager exists certifies uptime, not watching. **RC >= max(Nov 24,
+pager_day + 30d)**, and the release definition now reads with its
+silent-clause made operational: *a green is non-silent only if the same
+pipeline that produced it would have produced a page had it been red.*
+Pager template pre-staged at deploy/systemd/mpw-page@.service (channel
+= operator env choice; ntfy/email/TG all one POST). Backup/restore
 drill (W10) and fresh-machine DEPLOY verification remain unstarted
-operator tasks. Text-inventory channel (v0.8, the blind-spot feature)
-has no code yet. Nothing blocking is unknown; everything blocking is
-either gated-on-QA, clock-bound, or operator-scheduled.
+operator tasks — and note (Sammy, Oct-25): `backup_baselines.sh` as
+written CANNOT run from pvellm (zero outbound ssh auth edges, verified
+twice this session); prerequisite is a destination decision + one
+minted key, not a crontab line. Text-inventory channel (v0.8, the
+blind-spot feature) has no code yet. Nothing blocking is unknown;
+everything blocking is either gated-on-QA, clock-bound, or
+operator-scheduled.
 
 **Current weak points (ranked):** (1) page routing absent — a silence
 now pages the journal, nobody's phone; (2) amazon capture defect:
