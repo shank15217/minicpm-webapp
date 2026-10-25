@@ -19,7 +19,10 @@ until routed); 3 NOT DONE = the doc/reconciliation pass, owed lines:
 cadences stated from `crontab -l`; hostname-only tower rule ("IP
 literals die at the gate by design"); t16 coords window-relative under
 gridwin regime; `M uv.lock` + stray-db hygiene; OPERATOR Part A rewrite.
-4 NOT DONE (doc_lint as qa_gate clause 8).
+4 DONE (doc_lint wired as qa_gate clause 8 since the 2026-10-23 pass,
+  verified in qa_gate.sh this session — an earlier annotation here said
+  NOT DONE and was already stale when written; the doc-drift disease
+  catching itself is the point of the clause).
 
 **v0.7 items:** 1 ceilings-enable — GATED behind fit cohort
 (`CURRENT_REGIME` bumped atomically with rig, fit single-shape guard

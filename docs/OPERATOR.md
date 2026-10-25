@@ -8,148 +8,71 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 
 ---
 
-## Part A — tonight, in order (≈15 min, your hands)
+## Part A — the operating loop, UNIT AS LAUNCHER (measured 2026-10-25)
 
-### A1. Put gate-certified code in service on :8000  (this is runbook test "U1")
-> **Re-measure before trusting this block (doc-vs-host drift rule):** the
-> state facts below were true at write time, not by contract. Re-check in
-> 5 seconds:
-> - refs: `cd /root/minicpm-webapp && git rev-parse HEAD main origin/main`
-> - app port: `ss -tlnp | grep ':8000 '`
-> - towers (both — a dead `:8081` reads healthy to an :8080-only probe):
->   `curl -s -m2 localhost:8080/health` · `curl -s -m2 localhost:8081/health`
-> If any fact disagrees, the doc is stale — say so in the room, don't improvise.
-Measured prod state (ss + git, tonight): checkout sits detached at `5a1f892`
-(the v0.4.3 tag) but **nothing serves :8000** — the pre-v0.4 process from
-earlier today is gone — and both towers (`:8080`/`:8081`) are UP on Q8_0
-after the starter fix. So A1 is now just: get onto `main` (which is the tag
-plus docs plus the starter fix, zero app-code delta) and start. If `:8000`
-shows a listener again before you run this, kill it first.
+**Topology (all measured, this file states cadences from `crontab -l`, never
+memory):** app `minicpm-webapp.service` on pvellm (`:8000`, unit-owned env);
+towers SPLIT across hosts — `minicpm-llama@8080` (f16/fast) on **pvellm2**,
+`minicpm-llama@8081` (-4x/detail) on **pvellm3**; `minicpm-monitor.timer` +
+`minicpm-monitor-stale.timer` hourly, `Persistent=true`; control rig
+`0 * * * *` and viability `5 * * * *` (both hourly, cron on pvellm, durable
+paths). Port→mmproj pairing is PINNED in the tower unit's case-map, and the
+crossed-pair check is a committed probe:
+`env -u PYTHONPATH .venv/bin/python scripts/tower_orientation_probe.py`
+(fast must pay FEWER prompt tokens than detail; crossed = exit 1).
+
+**Ten-second health check (all four layers):**
 ```bash
-cd /root/minicpm-webapp
-# Prod :8000 is a BARE uvicorn process, not a systemd unit (QA-verified:
-# `systemctl list-unit-files | grep minicpm` returns nothing on pvellm today).
-# Find and stop it first — ss prints the pid:
-ss -tlnp | grep ':8000 '        # e.g. users:(("uvicorn",pid=18428,...)) → kill that pid
-# Why `checkout -B main origin/main` — four proofs, one per line (content
-# frozen, shape per QA 3 AM-skim ruling):
-#   1. -B is MANDATORY, not style: local `main` is the stale pre-v0.4 tip
-#      (75f1d4b) and `git fetch` never moves local branch refs — plain
-#      `checkout main` boots yesterday's code through the correct-looking script.
-#   2. -B is safe HERE: 75f1d4b is an ancestor of origin/main, local main has
-#      zero unique commits, and baselines/ is untracked (working tree survives).
-#   3. Why main, not the tag: v0.4.3..origin/main is 5 files, ALL docs +
-#      start_llama_servers.sh — zero app code (audited twice).
-#   4. The starter fix (LLAMA_BIN default + fail-loud) landed AFTER the tag
-#      cut (merge-base receipt), so `checkout v0.4.3` parks the broken starter
-#      in prod indefinitely. Runtime on main is byte-identical to the tag.
-git fetch origin && git checkout -B main origin/main
-nohup ./scripts/start_app.sh > app.log 2>&1 &   # nohup so it survives logout; DB migration runs at startup (pinned test)
-curl -s localhost:8000/health             # expect {"16x":"ok","4x":"ok","playwright":"available","baselines_count":2,...}
-
-> **BASELINE RE-CAPTURE — SUSPENDED (2026-10-19).** Do NOT re-capture
-> `fhlb` or `amazon` baselines until the post-restart re-check says
-> something true. Three capture-regime defects were found this date and
-> each poisoned "site changed" readings: un-scrolled full-page captures
-> (lazy sections render white, W12), bare-UA rig drift, and the route
-> guard defacing multi-CDN pages (guard now splits documents/subresources,
-> `779312d`). The stored baselines are probably still true; burning them
-> under a defective regime pins garbage as truth. Re-check order after
-> restart: boot receipt -> fhlb/amazon check rows -> only then any
-> re-capture decision. The calibration cohort is quarantined to the
-> CURRENT_REGIME stamp (`prescroll-4`): the fit loader (calibration/fit.py
-> `load_all`) admits only rows whose `capture_regime` equals it, so
-> un-stamped legacy rows never enter a fit; fit-time exclusions are
-> auditable in the fit output's `params.excluded` (as of the 2026-10-21
-> reconciliation: 8 quarantined-window + 28 drama rows) — nothing is
-> "calibrated" until new-regime rows accumulate across diurnal windows
-> (earliest graduation ~Oct 21).
-curl -s -X POST localhost:8000/analyze -F url=https://example.com/ | head -c 300
+curl -s -m5 localhost:8000/health | head -c 300   # commit, four "ok", gate_lockout []
+systemctl is-active minicpm-webapp minicpm-monitor.timer minicpm-monitor-stale.timer
+curl -s -m4 http://pvellm2.nellienet.win:8080/health; curl -s -m4 http://pvellm3.nellienet.win:8081/health
+python3 /root/minicpm-webapp/monitorlib.py stale --db baselines/runs.db --cadence 60 --grace 30 --require-ok
 ```
-Ping-pong any surprise to the room with the test ID (U1) — Quinn health-gates
-+ runs a verification round-trip on your word.
+Nine heartbeat rows expected (8 sites + the unconditional `towers` row).
 
-**Rollback (if v0.4.3 health goes red):**
-```bash
-# kill the new app's pid (ss -tlnp | grep ':8000 '), then:
-git checkout 75f1d4b && nohup ./scripts/start_app.sh > app.log 2>&1 &
-```
-Verification status, stated honestly (QA probe on a copied store, prod
-untouched): **old code BOOTS against a migrated DB — verified** (health
-answers on a throwaway with all three new columns present; migration is
-additive `ALTER ADD COLUMN` and old INSERTs name columns explicitly, so
-extra columns can't break it). **Not yet verified: the old code's full
-analyze write-path** — the throwaway's baseline lookup didn't reproduce
-prod's working path (probe artifact, cause unpinned), and both towers are
-DOWN as of this writing, so no end-to-end old-code run was possible. Net:
-rollback is expected-safe, and the first time you use it will be the proof —
-expect `{"16x":"unreachable"...}` in health until the towers are back
-regardless of which version you're on.
+**Restart / deploy:** everything through systemd —
+`systemctl restart minicpm-webapp`; tower units restart on their own hosts.
+Code moves: `git fetch` FIRST, then `git pull --ff-only` (installs-from-git
+fetch this turn, every time — a tracking ref is not a fetch; a stale ref +
+unit `cp` shipped the condemned unit through 44 crash-loops, scar receipt
+2026-10-25), refresh `/etc/systemd/system/` copies + `daemon-reload` if unit
+files changed. `scripts/start_app.sh` is **dev-only**; `nohup` launches are
+the W11 defect class and are not the prod path anymore.
 
-### A2. Vision towers (only when you relaunch them — decision included)
-Corrected semantics (README's old text was inverted; fixed in `888286d` —
-this very line was ALSO inverted until the 2026-10-21 doc lint; the truth is
-`app.py:149` MODE_ALIASES + `:8080`=f16/fast, `:8081`=-4x/detail):
-**fast = f16 mmproj = :8080 · detail = -4x file = :8081.**
-```bash
-MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh
-# house default is Q8_0; to stay on Q4_K_M:
-GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh
-```
-The script preserves towers already up and does the right mmproj/port pairing
-(:8080=f16 fast/general 64 tok/tile, :8081=-4x detail/OCR 256 tok/tile —
-measured same-image 489 vs 1851 prompt tokens, 2026-10-17; the older
-"832 vs 223 with f16 high-res" numbers in this doc were RETRACTED that day,
-falsified by re-measure + GGUF header diff; live pin:
-`MPW_TOWER_PROBE=1 python3 tests/test_tower_orientation.py`).
-Your call: Q4_K_M vs Q8_0 — both supported, one env var apart.
+**Tower wiring rules (each learned as an outage):** app finds towers ONLY
+via `LLAMA_SERVER_FAST` / `LLAMA_SERVER_DETAIL` in the UNIT file (shell
+exports rot; legacy `_16X/_4X` aliases still shadow — keep them absent).
+**Hostname form only: IP literals die at the S2 SSRF gate by design**
+(`TARGET_NOT_ALLOWED`); that refusal is the self-lockout path working —
+widen `MPW_ALLOW_TARGETS` never, especially not at 2 AM. Acceptance after
+any tower change: probe uncrossed + `/health` four `ok` + `towers` row OK.
 
-### A3. Turn on the watcher (closes W11 — the "monitored nothing for six days" gap)
-The kit is shipped and pinned but **not installed** — installing is yours:
-```bash
-mkdir -p ~/.config/systemd/user
-# NOTE (updated 2026-10-21): the monitor kit is ON MAIN (v0.5-dev merged
-# Oct-21). Fetch and read blobs from the NAMED ref — never FETCH_HEAD:
-# any unrelated fetch silently retargets it, so the old ceremony could
-# materialize the wrong tree's unit files.
-cd /root/minicpm-webapp && git fetch origin main   # prod clone tracks only main by default (QA-verified)
-for f in minicpm-monitor.service minicpm-monitor.timer \
-         minicpm-monitor-stale.service minicpm-monitor-stale.timer; do
-  git show origin/main:deploy/systemd/$f > ~/.config/systemd/user/$f
-done                                                     # all four verified to materialize this way
-# ALSO required: the units' ExecStart runs monitorlib.py, which is NOT in the
-# v0.4.3 tag either (QA-verified: absent at 5a1f892, present at v0.5-dev tip).
-# Pull it into the same place the unit expects:
-#
-# PLACEMENT CONTRACT (decided 2026-10-17): monitorlib.py lives at the REPO
-# ROOT — that is the deploy contract; systemd ExecStart runs it from the repo
-# root, so it does NOT move to scripts/. Never hot-copy it onto main: there
-# it is untracked and BLOCKS `git checkout v0.5-dev` — git blocks on file
-# existence, not content, even when byte-identical (Sammy, measured). If a
-# checkout ever aborts naming monitorlib.py: mv monitorlib.py /tmp &&
-# git checkout -B v0.5-dev origin/v0.5-dev — git materializes it identically.
-# (Never clean baselines/ to resolve a monitorlib.py abort — it is the one
-# directory on that disk that holds irreplaceable prod evidence.)
-git show origin/main:monitorlib.py > /root/minicpm-webapp/monitorlib.py
-# EDIT MPW_DIR/MPW_BASE in the two .service files if your paths differ
-loginctl enable-linger $USER
-systemctl --user daemon-reload
-systemctl --user enable --now minicpm-monitor.timer       # hourly analyze, Persistent: missed windows fire at boot
-systemctl --user enable --now minicpm-monitor-stale.timer # hourly deadline check, --require-ok (blind watcher = alert)
-systemctl --user start minicpm-monitor.service            # run one cycle now
-python3 monitorlib.py stale --db baselines/runs.db --cadence 60 --grace 30 --require-ok   # "is it even watching?" one-liner
-```
-Route the stale check's failure somewhere loud (its header comment lists
-options). Until you install these, W11 stays open in the ledger — correct
-labeling, not a defect in the kit.
+**Pager (W11 half #3, wired, channel open):** stale red fires
+`OnFailure=mpw-page@%N.service`; configuring = one line,
+`MPW_PAGE_URL=<ntfy/TG/webhook>` in `/etc/mpw-page.env` (0600).
+Unconfigured it fails LOUD — until a channel exists, alerts reach journald
+only and the 30-day release clock has NOT started (ROADMAP silent-clause).
 
-### A4. One word we still need from you
-fhlb-of.com's hero banner rotates — **expected: yes/no?** That word converts
-the provisional attestation into a real one; it is the last human input
-between the current `provisional_until_diurnal` tolerance profiles and
-graduated ones.
+**Baselines backup (prerequisite, not a cron line):** `backup_baselines.sh`
+needs an ssh trust edge and **pvellm has zero outbound ones** (measured
+twice, 2026-10-25). Operator picks a destination + mints one dedicated key
+first; an installed-but-failing nightly job is the silent-monitor class.
+
+**Baseline re-capture: still SUSPENDED** (2026-10-19 capture-defect trio +
+amazon churn open): re-check order boot receipt → fhlb/amazon check rows →
+only then any re-capture decision. Cohort admission is strict regime
+equality to `fit.CURRENT_REGIME` (now `prescroll-4+gridwin2560`, atomic
+with the rig constant, pinned by test); gridwin-era producer claims cite
+digest `9219a9da8705`, not the pre-gridwin `a6ecce33a3ed`.
+
 
 ---
+
+## Historical appendix — pre-unit era (SUPERSEDED; preserved as receipts)
+Bare-process rituals, user-unit monitor install kit, and the canonical
+restart ritual below describe the pre-2026-10-25 world (nohup app, local
+towers, ~/.config/systemd/user timers). Kept because they are the scar
+record; do not execute them on the unit-era host.
 
 ## Canonical restart ritual (docs-only; authored by @qaquinn from the room spec after two scanner-blocked attempts by its original author)
 
@@ -172,9 +95,9 @@ If `checkout` aborts on `monitorlib.py`, see W11: move it to `/tmp` and retry �
 
 | Loop | Who runs it | Command / status |
 |---|---|---|
-| Hourly site checks | systemd timer (A3) | automatic once installed |
-| "Is the watcher alive?" | systemd stale timer (A3) | or manual one-liner above |
-| Control batch (calibration evidence, 6h windows) | Quinn's cron on pvellm, durable paths | already installed; rows carry `trigger`+`detdiff_commit` |
+| Hourly site checks | systemd timer (Part A) | INSTALLED 2026-10-25 (Persistent catches missed windows) |
+| "Is the watcher alive?" | systemd stale timer (Part A) | hourly; pages via mpw-page@ once a channel exists |
+| Control batch (calibration evidence, HOURLY — crontab `0 * * * *`, was 6h pre-Oct-21) | rig on pvellm, durable paths | rows carry `trigger`+`capture_regime` (gridwin era: `prescroll-4+gridwin2560`) |
 | Tolerance profiles | `python3 scripts/calibrate.py <control.jsonl> --index /root/minicpm-webapp/baselines/index.json --attest-dir <dir> --out-dir <dir>` | rerun when you like; profiles print N, auto/manual split, and named `graduation_blockers`. `--index` supplies the §7 cohort boundary (also via `$MPW_BASELINE_INDEX` or autodiscovery); with NO resolvable source every profile is `cohort_source_missing` + `not_for_alerting`, never a silent cohort-blind graduation (Quinn's repro, 2026-10-17) |
 | History retention | `python3 monitorlib.py prune --db baselines/runs.db --keep-days 30` (dry-run; add `--apply`) | never deletes evidence rows (non-OK / verdicts / controls) |
 
