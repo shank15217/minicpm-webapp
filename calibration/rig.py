@@ -19,7 +19,16 @@ OUT = Path(os.environ.get("MPW_CONTROL_ROWS", "/root/mpw-calibration/control.jso
 win = sys.argv[1] if len(sys.argv) > 1 else datetime.datetime.now().strftime("autoT%H")
 TRIGGER = "manual" if len(sys.argv) > 1 else "auto"
 import subprocess
-CAPTURE_REGIME = "prescroll-4"  # +UA parity +route-guard parity (third-party state deterministic)
+CAPTURE_REGIME = "prescroll-4+gridwin2560"  # +UA parity +route-guard parity (third-party state deterministic)
+# GRIDWIN (Oct-25 r3, pre-registered acceptance in HANDOFF-9 Addendum 3):
+# mean grid windowed to top-2560px (40 grid rows, gridline-aligned).
+# H₀ chosen by the QUIET-BOUNDARY rule, NOT anchored to a historical
+# page-height mode (amazon's dominant mode migrates: 46->53->60/61).
+# Check pre-registered: boundary row must be flicker-free across the
+# first 24 gridwin fires; lower ONCE to 2048 (32 rows) if it flickers,
+# document the bump. Screenshot stays full_page — height_delta_px and
+# the VLM keep the tail; only the grid is windowed.
+GRIDWIN_PX = 2560
 def _app_commit():
     try:
         return subprocess.run(["git","-C","/root/minicpm-webapp","rev-parse","--short","HEAD"],
@@ -67,7 +76,8 @@ async def main():
                     _bm = None
                 try:  # mean grid (persistence corpus; LIVE luma, no baseline)
                     # — schema-only, never enters a verdict; never breaks batch
-                    _mg = json.dumps(detdiff.block_mean_grid(shot))
+                    _mg = json.dumps(detdiff.block_mean_grid(shot,
+                                                             window_px=GRIDWIN_PX))
                 except Exception:
                     _mg = None
                 row = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),

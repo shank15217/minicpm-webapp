@@ -120,6 +120,34 @@ def analyze_one(base_url: str, site_key: str, url: str, timeout: int):
     return "CHECK_FAILED", f"status={st} error={body.get('error_code')}", None
 
 
+TOWERS_PROBES = ("fast", "detail", "16x", "4x")
+
+
+def towers_health(base_url: str, timeout: int = 15):
+    """Record the /health gather verdict as site="towers" (Sammy hole,
+    Oct-25; Quinn scope edit): the narrator is the ONLY tower traffic in
+    /analyze and is skipped while det says "identical" — a dead tower on
+    det-quiet sites keeps every site heartbeat OK forever. The four
+    probes already exist in the app's /health gather (app.py:1679);
+    their answer was discarded. Record it: non-OK unless EVERY probe
+    reads exactly "ok". Stale logic unchanged — cmd_stale is per-site
+    already (monitorlib.py:141-159, Quinn verified); the towers row is
+    row #9 in that loop, and test_masking fixtures pin both directions
+    so a future "simplification" of the per-site loop is a test failure.
+    """
+    req = urllib.request.Request(base_url.rstrip("/") + "/health")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:                      # noqa: BLE001 — transport is the point
+        return "TOWERS_UNREACHABLE", f"/health gather failed {type(e).__name__}: {e}"
+    bad = [k for k in TOWERS_PROBES if body.get(k) != "ok"]
+    if bad:
+        return ("TOWERS_BLIND",
+                "; ".join(f"{k}={body.get(k)}" for k in bad)[:480])
+    return "OK", "all tower probes ok"
+
+
 def cmd_run(args) -> int:
     idx = json.load(open(args.index))["baselines"]
     con = connect(args.db)
@@ -134,6 +162,14 @@ def cmd_run(args) -> int:
         record_heartbeat(con, site, status, time.monotonic() - t0, rid, detail)
         print(f"{site} {status} {detail} run_history_id={rid}")
         rc = rc or (status != "OK")
+    # Towers row LAST: its verdict comes from the same gather the app
+    # already performed; a blind tower must never read FRESH-OK (hole photo
+    # accepted pre-fix as negative control, plant order in HANDOFF-10).
+    t0 = time.monotonic()
+    status, detail = towers_health(args.base_url)
+    record_heartbeat(con, "towers", status, time.monotonic() - t0, None, detail)
+    print(f"towers {status} {detail}")
+    rc = rc or (status != "OK")
     con.close()
     return rc
 

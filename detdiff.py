@@ -196,7 +196,8 @@ def block_mae_shadow(a_bytes: bytes, b_bytes: bytes) -> dict:
     return {"g64": coarse, "t16": top, "floor16": floor16}
 
 
-def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
+def block_mean_grid(a_bytes: bytes, size: int = 64,
+                    window_px: int | None = None) -> dict:
     """Per-block mean luma (1 byte/block, b64) — the schema answer to the
     persistence clause (Oct-20, Sammy/Quinn): unsigned |MAE| vs the
     baseline cannot express sign, so slow same-direction edits are
@@ -215,6 +216,12 @@ def block_mean_grid(a_bytes: bytes, size: int = 64) -> dict:
     ia = Image.open(io.BytesIO(a_bytes)).convert("L")
     if ia.width != 1280:
         ia = ia.resize((1280, int(ia.height * 1280 / ia.width)))
+    if window_px is not None and ia.height > window_px:
+        # GRIDWIN (Oct-25, HANDOFF-9 Addendum 3): top-anchored window,
+        # shape deterministic by construction for pages TALLER than H.
+        # Pages at-or-below H keep their own height — a collapse below H
+        # MUST still break shape (truncation self-flags; never launder).
+        ia = ia.crop((0, 0, ia.width, window_px))
     rows, cols = ia.height // size, 1280 // size
     vals = bytearray(rows * cols)
     for by in range(rows):
