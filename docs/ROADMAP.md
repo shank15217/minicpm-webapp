@@ -45,26 +45,33 @@ the pager exists certifies uptime, not watching. **RC >= max(Nov 24,
 pager_day + 30d)**, and the release definition now reads with its
 silent-clause made operational: *a green is non-silent only if the same
 pipeline that produced it would have produced a page had it been red.*
-Pager template pre-staged at deploy/systemd/mpw-page@.service (channel
-= operator env choice; ntfy/email/TG all one POST). Backup/restore
-drill (W10) and fresh-machine DEPLOY verification remain unstarted
-operator tasks — and note (Sammy, Oct-25): `backup_baselines.sh` as
-written CANNOT run from pvellm (zero outbound ssh auth edges, verified
-twice this session); prerequisite is a destination decision + one
-minted key, not a crontab line. Text-inventory channel (v0.8, the
-blind-spot feature) has no code yet. Nothing blocking is unknown;
-everything blocking is either gated-on-QA, clock-bound, or
-operator-scheduled.
+**PAGER IS LIVE (2026-10-25, `pager=tg`):** first deliveries 07:32:41Z
+(acceptance test-fire) and 07:33:48Z (first real-unit page: an unplanned
+backup failure that became its own proof); storm law verified both
+branches within one hour (delivered + coalesced). **pager_day CANDIDATE
+= 2026-10-25, stamp is Quinn's after her acceptance pass** — with which
+RC >= max(Nov 24, Nov 24) collapses to a pure calendar date.
+**BACKUP IS LIVE + DRILLED (2026-10-25, `backup=gateway-disk`):**
+nightly timer with day-one OnFailure page, online-sqlite snapshot,
+restore drill sha256 8/8 + row-count 179/58 exact into throwaway dir;
+seaweedfs explicitly left alone by the same decision ("lab, not a
+service"). Fresh-machine DEPLOY verification and amazon capture
+stabilization remain open; text-inventory channel (v0.8) has no code
+yet. Everything that was gated on the two human words is now machine
+work completed; what remains is clock-bound, QA-gated, or the named
+defect work.
 
-**Current weak points (ranked):** (1) page routing absent — a silence
-now pages the journal, nobody's phone; (2) amazon capture defect:
+**Current weak points (ranked, updated 2026-10-25 post-words):** (1) CLOSED
+— alerts reach a phone now (tg, storm-lawed); (2) amazon capture defect:
 bounded for persistence/ceiling lanes by gridwin+guard, but the capture
 itself still churns (growth+truncation) and the site is unscoreable
-below its own epoch; (3) ceiling layer trained on nothing until the new
-regime accrues — global `DET_PASS_SIM` fallback is doing all real work;
-(4) baselines durability = cron script installed? NO (v0.8.2 open) —
-host loss today = re-baseline ceremony; (5) docs still carry pre-split
-topology folklore until the doc pass lands.
+below its own epoch — **the one named engineering defect left**; (3)
+ceiling layer trained on nothing until the new regime accrues — global
+`DET_PASS_SIM` fallback is doing all real work; (4) CLOSED same day —
+baselines durable on gateway-disk, drill executed (residual: failure
+domain is host-loss, not site-loss, stated in the unit header); (5)
+docs still carry pre-split topology folklore in DEPLOY.md until the
+pass's second half lands (OPERATOR rewritten 2026-10-25).
 
 Definition of 1.0 (proposed): **a site that baselines today is genuinely
 watched tomorrow** — scheduled checks, per-block learned ceilings earned on

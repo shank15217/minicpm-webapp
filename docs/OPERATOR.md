@@ -47,16 +47,29 @@ exports rot; legacy `_16X/_4X` aliases still shadow — keep them absent).
 widen `MPW_ALLOW_TARGETS` never, especially not at 2 AM. Acceptance after
 any tower change: probe uncrossed + `/health` four `ok` + `towers` row OK.
 
-**Pager (W11 half #3, wired, channel open):** stale red fires
-`OnFailure=mpw-page@%N.service`; configuring = one line,
-`MPW_PAGE_URL=<ntfy/TG/webhook>` in `/etc/mpw-page.env` (0600).
-Unconfigured it fails LOUD — until a channel exists, alerts reach journald
-only and the 30-day release clock has NOT started (ROADMAP silent-clause).
+**Pager (LIVE since 2026-10-25T07:32Z, `pager=tg` by @user):** stale/backup
+failure fires `OnFailure=mpw-page@%N.service` → form-encoded TG into the
+operator's DM (chat id in `/etc/mpw-page.env`, 0600, token lives nowhere
+else; **TG quirk measured: POST query strings are ignored — chat_id rides
+in the body**, pinned in code). Storm law live-verified both branches the
+first hour: 2 delivered pages, 1 coalesced duplicate. First delivery =
+**pager_day candidate 2026-10-25** (Quinn stamps the 30-day clock after her
+acceptance pass). Field lesson banked the hard way: destination truth comes
+from `ip -4 -o addr` on the target itself — the gateway is **.209**, a
+stale `.22` in the first unit draft failed against a stranger host with
+ZERO log lines on our side.
 
-**Baselines backup (prerequisite, not a cron line):** `backup_baselines.sh`
-needs an ssh trust edge and **pvellm has zero outbound ones** (measured
-twice, 2026-10-25). Operator picks a destination + mints one dedicated key
-first; an installed-but-failing nightly job is the silent-monitor class.
+**Baselines backup (LIVE since 2026-10-25, `backup=gateway-disk` by
+@user; seaweedfs left alone by the same decision):** nightly 03:30Z
+`minicpm-backup.timer` (Persistent), pushes tar.gz to gateway
+`mpwbackup@192.168.35.209:/srv/mpwbackup` (dedicated keypair,
+`from=…,restrict` authorized_keys — pvellm's one purpose-scoped outbound
+edge), 14 dailies, `IOSchedulingClass=idle`, **OnFailure page from day
+one**. Runs.db is snapshotted via python-stdlib sqlite online-backup
+into staging before tar (hot-tar tears DBs silently; drill finding).
+Restore drill executed same day: sha256 8/8 match, row counts 179/58
+exact, integrity_check ok, into throwaway dir only. Failure domain:
+survives loss of pvellm, not of the LAN/site.
 
 **Baseline re-capture: still SUSPENDED** (2026-10-19 capture-defect trio +
 amazon churn open): re-check order boot receipt → fhlb/amazon check rows →
