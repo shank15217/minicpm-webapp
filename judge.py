@@ -60,6 +60,15 @@ def _png_b64(png_bytes: bytes) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _encode(png_bytes: bytes) -> str:
+    """Un-encodable input is a BLINDNESS state (S1 species): the eye did
+    not see; that must never route onward as CLEAN."""
+    try:
+        return _png_b64(png_bytes)
+    except Exception as e:                                    # noqa: BLE001
+        raise JudgeBlind(f"unencodable image: {type(e).__name__}: {e}") from e
+
+
 def _default_transport(detail_url: str, body: bytes, timeout: int) -> str:
     rq = urllib.request.Request(detail_url, data=body,
                                 headers={"Content-Type": "application/json"})
@@ -76,7 +85,7 @@ def judge_png(png_bytes: bytes, detail_url: str, *,
         "messages": [{"role": "user", "content": [
             {"type": "text", "text": PROMPT},
             {"type": "image_url",
-             "image_url": {"url": "data:image/png;base64," + _png_b64(png_bytes)}}]}],
+             "image_url": {"url": "data:image/png;base64," + _encode(png_bytes)}}]}],
     }).encode()
     send = transport or _default_transport
     try:
