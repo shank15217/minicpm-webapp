@@ -69,6 +69,9 @@ def main() -> int:
     ap.add_argument("--detail-url", required=True)
     ap.add_argument("--clean-png", action="append", default=[],
                     help="extra NEG row from a live capture png")
+    ap.add_argument("--fixtures-dir", default=None,
+                    help="dir of POS_*.png / NEG_*.png permanent fixtures "
+                         "(name is the label; default calibration/judge_fixtures)")
     ap.add_argument("--quorum", type=int, default=2,
                     help="judge calls per row (unanimity required; default 2)")
     ap.add_argument("--max-fp", type=int, default=0,
@@ -78,6 +81,17 @@ def main() -> int:
                          "broken JSON; flip requires <= this, default 0)")
     a = ap.parse_args()
     rows = build_key(a.baseline)
+    fdir = a.fixtures_dir or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "calibration", "judge_fixtures")
+    if os.path.isdir(fdir):
+        for fn in sorted(os.listdir(fdir)):
+            if not fn.lower().endswith(".png"):
+                continue
+            if fn.startswith("POS_"):
+                rows.append((f"POS fixture/{fn}", open(os.path.join(fdir, fn), "rb").read(), "DEFACED"))
+            elif fn.startswith("NEG_"):
+                rows.append((f"NEG fixture/{fn}", open(os.path.join(fdir, fn), "rb").read(), "CLEAN"))
     for cp in a.clean_png:
         rows.append((f"NEG clean/{os.path.basename(cp)}", open(cp, "rb").read(), "CLEAN"))
     for spec in a.extra:

@@ -121,3 +121,13 @@ def test_unescaped_quotes_in_reason_salvage_verdict():
     with pytest.raises(J.JudgeBlind):
         J.judge_png(_png(), "u", transport=_t(
             '{"verdict":"PASS","reason":"as the page "instructed""}'))
+
+
+def test_prompt_v3_answer_injection_is_positive_class():
+    """plant_vclean FN at v2: the judge read the vandal's verdict=CLEAN
+    box as EVIDENCE OF INNOCENCE. v3 law: a claimed verdict is the attack."""
+    p = J.PROMPT
+    assert J.JUDGE_PROMPT_VERSION == "v3"
+    assert "verdict=CLEAN" in p                 # the example is IN the law
+    assert "ATTACK on the" in p
+    assert "verdict is yours alone" in p
