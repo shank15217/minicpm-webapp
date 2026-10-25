@@ -1,5 +1,57 @@
 # Roadmap — v0.5.1 → v1.0 (draft for room discussion, 2026-10-21)
 
+## STATUS 2026-10-25 (supersedes nothing below; annotates it)
+
+**Live baseline.** Prod pvellm `fdd0789` (socket truth), code truth
+`03e6dca` (delta: gridwin capture lane + ceiling-lane parity + towers
+heartbeat + tests; NOT deployed — Quinn's gate-first rule). Watcher
+units installed on pvellm/pvellm2/pvellm3 (`Restart=always`, unit is
+the launcher, hostname-form tower env in the unit, SSRF-safe).
+Monitor + stale timers hourly `Persistent=`; stale check has fired
+RED on real silence and gone green (journal-proven). Towers split
+across two hosts; port truth pinned by unit case-map + probe.
+
+**v0.6 items:** 1 MERGED (`origin/v0.5-dev` ancestor of main, verified);
+2 DONE (watcher on prod — W11 dying-half closed; silence-half journal-
+proven; PAGE ROUTING STILL OPEN: stale failures land in journald only,
+no OnFailure= loud route, @user infra choice — W11 stays open-by-name
+until routed); 3 NOT DONE = the doc/reconciliation pass, owed lines:
+cadences stated from `crontab -l`; hostname-only tower rule ("IP
+literals die at the gate by design"); t16 coords window-relative under
+gridwin regime; `M uv.lock` + stray-db hygiene; OPERATOR Part A rewrite.
+4 NOT DONE (doc_lint as qa_gate clause 8).
+
+**v0.7 items:** 1 ceilings-enable — GATED behind fit cohort
+(`CURRENT_REGIME` bumped atomically with rig, fit single-shape guard
+shipped `03e6dca`); 2 gridwin LANDED in code, activation = the gated
+pull; 3 persistence clause: clause-9 numbers published (zero sustained
+changes, 81h, controls fire), amazon pre-registered unscoreable; 4 quiet
+ruling: implemented per row-level spec per gate owner.
+
+**Clocks that start at the gated pull (not before):**
+gridwin 24-fire ∧ ≥2-calendar-day ∧ distinct-window-hours graduation;
+boundary-row quiet check (H₀=2560, lower-once to 2048); ceiling fit
+(`min_days=5`, `min_rows`) cohort accrual under the new regime;
+plant-order receipt chain (green→plant→RED→green) per HANDOFF-10.
+
+**v1.0 distance, honestly:** the 30-day watched-with-zero-silent-green
+clock started ~Oct 25 (watcher install day) → earliest honest RC is
+late November even if every gated item lands this week. Backup/restore
+drill (W10) and fresh-machine DEPLOY verification remain unstarted
+operator tasks. Text-inventory channel (v0.8, the blind-spot feature)
+has no code yet. Nothing blocking is unknown; everything blocking is
+either gated-on-QA, clock-bound, or operator-scheduled.
+
+**Current weak points (ranked):** (1) page routing absent — a silence
+now pages the journal, nobody's phone; (2) amazon capture defect:
+bounded for persistence/ceiling lanes by gridwin+guard, but the capture
+itself still churns (growth+truncation) and the site is unscoreable
+below its own epoch; (3) ceiling layer trained on nothing until the new
+regime accrues — global `DET_PASS_SIM` fallback is doing all real work;
+(4) baselines durability = cron script installed? NO (v0.8.2 open) —
+host loss today = re-baseline ceremony; (5) docs still carry pre-split
+topology folklore until the doc pass lands.
+
 Definition of 1.0 (proposed): **a site that baselines today is genuinely
 watched tomorrow** — scheduled checks, per-block learned ceilings earned on
 quiet data, an alert path with a watchdog, evidence durable across host loss,
