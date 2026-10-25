@@ -54,6 +54,14 @@ post() {  # $1 = message body; URL/token come from env ONLY (never argv)
 LAST=$(sed -n 1p "$STAMP" 2>/dev/null || echo 0)
 FIRST=$(sed -n 2p "$STAMP" 2>/dev/null || echo "$NOW")
 SUPPRESSED=$(sed -n 3p "$STAMP" 2>/dev/null || echo 0)
+# FAIL-OPEN on corrupt state (Quinn 5th contract, 2026-10-25): non-numeric
+# stamps must NOT exit 2 before the POST — a crash-loop mid-state-write is
+# the exact 44-restart shape the cooldown exists for, and a swallowed alert
+# is the failure this whole subsystem is named against. Garbage => page
+# now, overwrite the garbage.
+case $LAST in ''|*[!0-9]*) LAST=0;; esac
+case $FIRST in ''|*[!0-9]*) FIRST=$NOW;; esac
+case $SUPPRESSED in ''|*[!0-9]*) SUPPRESSED=0;; esac
 
 if [ "$LAST" != "0" ] && [ $((NOW - LAST)) -lt "$COOLDOWN" ]; then
     # in-window: coalesce silently (local log line, no post)

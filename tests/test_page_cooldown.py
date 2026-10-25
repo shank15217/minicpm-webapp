@@ -90,3 +90,25 @@ def test_unconfigured_still_fails_loud(tmp_path):
     r = subprocess.run(["/bin/sh", str(PAGE), "x.service"],
                        env=env, capture_output=True, text=True)
     assert r.returncode == 1 and "NOT CONFIGURED" in r.stdout
+
+
+def test_corrupt_state_fails_open_posts_anyway(tmp_path):
+    """Quinn's 5th contract (planted repro, verbatim shape): garbage stamp
+    must NOT exit 2 before the POST — page attempted, rc in curl-land."""
+    srv = _sink_server()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/topic"
+    (tmp_path / "minicpm-monitor-stale.service.state").write_text(
+        "garbage-not-a-timestamp\nalso-garbage\nnot-a-count\n")
+    r = _fire(tmp_path, url)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)  # not 2
+    assert len(_Sink.posts) == 1                                  # POST happened
+    # state self-healed to numeric triple
+    nums = (tmp_path / "minicpm-monitor-stale.service.state"
+            ).read_text().split()
+    assert all(n.isdigit() for n in nums), nums
+    # partial corruption (only LAST garbage) also fails open
+    (tmp_path / "minicpm-monitor-stale.service.state").write_text(
+        "x\n1700000000\n3\n")
+    r = _fire(tmp_path, url)
+    srv.shutdown()
+    assert r.returncode == 0 and len(_Sink.posts) == 2
