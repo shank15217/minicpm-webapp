@@ -23,12 +23,8 @@ Description=page for failed unit %i
 
 [Service]
 Type=oneshot
-EnvironmentFile=-/etc/mpw-page.env
-ExecStart=/bin/sh -c '\
-  if [ -z "$MPW_PAGE_URL" ]; then \
-    echo "mpw-page: PAGER NOT CONFIGURED for failure of %i — set MPW_PAGE_URL in /etc/mpw-page.env"; \
-    exit 1; \
-  fi; \
-  msg="mpw ALERT: unit %i failed on $(hostname) at $(date -u +%FT%TZ); see: journalctl -u %i -n 50"; \
-  curl -fsS -m 15 -H "Title: minicpm-webapp alert" ${MPW_PAGE_TOKEN:+-H "Authorization: Bearer $MPW_PAGE_TOKEN"} \
-       -d "$msg" "$MPW_PAGE_URL" && echo "mpw-page: paged for %i"'
+# All logic lives in scripts/page.sh — systemd reserves ${} and chokes on
+# shell expansions inlined into ExecStart (mpw-page@ failed
+# systemd-analyze verify at first commit; verify-before-push is not
+# optional even for alerting units).
+ExecStart=/bin/sh /root/minicpm-webapp/scripts/page.sh %i
