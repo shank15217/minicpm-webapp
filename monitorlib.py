@@ -161,6 +161,10 @@ def cmd_run(args) -> int:
     rc = 0
     for site, entry in sorted(idx.items()):
         url = entry.get("url")
+        if entry.get("paused"):                  # user ruling 2026-10-25:
+            print(f"{site} PAUSED ({entry['paused']}) - skipped, "
+                  "no heartbeat written (stale must skip via --index)")
+            continue                             # dynamic-site churn is out
         t0 = time.monotonic()
         status, detail, rid = analyze_one(args.base_url, site, url, args.timeout)
         if rid is None:                          # best-effort row-id pointer
@@ -185,12 +189,27 @@ def cmd_stale(args) -> int:
     con = connect(args.db)
     sites = (args.sites.split(",") if args.sites
              else [r[0] for r in con.execute("SELECT DISTINCT site FROM heartbeat")])
+    paused = {}
+    if getattr(args, "index", None):
+        # Paused roster (user ruling 2026-10-25): entries paused in the
+        # index stop writing heartbeats; stale MUST skip them or a paused
+        # site pages red forever. Without --index the old behavior stands
+        # - which is why the stale unit now passes the index path.
+        try:
+            paused = {k: v.get("paused") for k, v in
+                      json.load(open(args.index))["baselines"].items()
+                      if v.get("paused")}
+        except Exception:                        # unreadable index: fail open
+            print("stale: --index unreadable; paused sites NOT skipped")
     if not sites:
         print("STALE: no heartbeat rows exist at all — scheduler has never completed a run")
         return 1
     now = utcnow()
     rc = 0
     for s in sites:
+        if s in paused:
+            print(f"{s} PAUSED ({paused[s]}) - not counted stale by ruling")
+            continue
         row = latest_heartbeat(con, s)
         stale = is_stale(row[0] if row else None, now, args.cadence, args.grace)
         status = row[1] if row else "NEVER"
@@ -251,6 +270,9 @@ def main(argv=None) -> int:
     s.add_argument("--require-ok", action="store_true",
                    help="also fail when the newest terminal row per site is not OK "
                         "(deadline met but watcher is blind)")
+    s.add_argument("--index", default="",
+                   help="baselines index; entries marked paused are not "
+                        "counted stale (required in the stale unit)")
     s.set_defaults(fn=cmd_stale)
     p = sub.add_parser("prune")
     p.add_argument("--db", required=True)

@@ -86,6 +86,38 @@ quiet data, an alert path with a watchdog, evidence durable across host loss,
 and every doc claim reproducible by a stranger. Everything below maps to an
 open W in the RUNBOOK ledger or a doc-lint finding (DOC-LINT-2026-10-21.md).
 
+## DEFINITION OF DONE — USER RULING 2026-10-25 (authoritative; overrides above)
+
+Verbatim intent: a small app that verifies whether **relatively static
+sites** (fhlb-of.com class; app login/splash pages) are **(1) up, (2)
+serving content, (3) serving content that isn't defacement**, using the
+analytical + vision towers for a **status with reasonable confidence**.
+Highly-dynamic sites are explicitly NOT the target ("doesn't need to
+track highly dynamic sites like amazon").
+
+Consequences, in order:
+1. **amazon capture stabilization RETIRES** — the defect that owned this
+   lane was a dynamic-site problem; out of scope by ruling. Baselines and
+   history stay on disk (evidence is never deleted); amazon moves to a
+   PAUSED roster: no monitor rows, no fit cohorts, docs say paused.
+2. Remaining feature set to done: **(A) roster scoping** to the user's
+   real static targets (only human input left: the URL list);
+   **(B) defacement acceptance suite** — planted defaced fixture
+   detected end-to-end within one monitor cycle, plus quiet-period
+   false-positive measurement on the static roster: THIS is "reasonable
+   confidence", quantified, not adjectives; **(C) one status surface**
+   answering up/content/not-defaced per site with confidence + reason,
+   BLIND stated loudly when blind (no silent green, unchanged law).
+3. Unchanged because they ARE requirements (1)-(3)'s plumbing: monitor
+   timers, towers health row, pager + storm law, canary day-tokens,
+   drift check, gateway-disk backup. The ceiling layer (weak point 3)
+   graduates from "nice" to core: it is the defacement detector.
+4. Demoted, not deleted: persistence-corpus graduation and the gridwin
+   clock were built for dynamic churn; on a static-only roster they keep
+   accruing as bonus rigor but no longer gate the release. The Nov-24
+   zero-silent-green watching clock STANDS (it certifies requirement-3
+   alerting, which the pager+canary chain now makes checkable daily).
+
 ## v0.6 — "one line" (unblock everything else; low code, high decision value)
 
 1. **Merge `origin/v0.5-dev` into `main`** (L7). Brings `monitorlib.py`

@@ -20,4 +20,4 @@ OnFailure=mpw-page@%N.service
 Type=oneshot
 Environment=MPW_DIR=/root/minicpm-webapp
 Environment=MPW_PY=python3
-ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py stale --db "$MPW_DIR/baselines/runs.db" --cadence 60 --grace 30 --require-ok'
+ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py stale --db "$MPW_DIR/baselines/runs.db" --index "$MPW_DIR/baselines/index.json" --cadence 60 --grace 30 --require-ok'

@@ -50,6 +50,9 @@ async def main():
         await ctx.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         for key, meta in idx["baselines"].items():
+            if meta.get("paused"):               # user ruling 2026-10-25:
+                print(f"PAUSED {key}: {meta['paused']} - capture skipped")
+                continue                         # no rows, no cohort weight
             url = meta.get("url"); png = PROD / f"{key}.png"
             if not url or not png.exists():
                 print(f"skip {key}"); continue
