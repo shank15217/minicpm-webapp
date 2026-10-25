@@ -172,6 +172,9 @@ def cmd_run(args) -> int:
             row = con.execute("SELECT MAX(id) FROM run_history WHERE url = ?", (url,)).fetchone()
             rid = row[0] if row else None
         record_heartbeat(con, site, status, time.monotonic() - t0, rid, detail)
+        fired = classify_and_alert(con, site, entry)
+        if fired:
+            print(f"{site} DEFACED verdict -> pager fired (instance minicpm-defaced-{site})")
         print(f"{site} {status} {detail} run_history_id={rid}")
         rc = rc or (status != "OK")
     # Towers row LAST: its verdict comes from the same gather the app
@@ -220,6 +223,58 @@ def cmd_stale(args) -> int:
         rc = rc or stale or blind
     con.close()
     return rc
+
+
+def classify_and_alert(con, site: str, entry: dict, subprocess_run=None) -> int:
+    """B.0 verdict->pager plumbing (user DoD verb 3; contract §2.8).
+
+    Day-one PAGEABLE = {DEFACED} only, plus the pre-existing chains for
+    BLIND / up / content (stale --require-ok -> OnFailure, untouched).
+    DEFACEMENT-RISK / DRIFT-ELEV / jitter-shaped labels are surface-and-
+    digest ONLY: promoting a RISK-shaped label to pageable is its own
+    gate event with plant-verified receipts, never a B.0 default
+    (careers prints HIGH hourly on a provably clean page; a true chain
+    pointed at a false label ends in a muted bot = silent-by-design).
+    PAUSED sites never page under ANY injected verdict (pause-integrity
+    upgraded from stale-chain to pager-chain).
+
+    Per-SITE instances (mpw-page@minicpm-defaced-<key>) so the storm
+    law coalesces per site, not per unit: two defaced sites in one
+    window MUST produce two pages, each naming its own site.
+    Returns pages fired (for tests/telemetry), never changes run rc.
+    """
+    if entry.get("paused"):
+        return 0
+    row = con.execute(
+        "SELECT id, verdict, det_similarity FROM run_history"
+        " WHERE url=? ORDER BY id DESC LIMIT 1", (entry.get("url"),)).fetchone()
+    if not row or row[1] != "DEFACED":           # sole day-one pageable
+        return 0
+    rid, verdict, sim = row
+    state_dir = os.environ.get("MPW_PAGE_STATE_DIR", "/var/lib/mpw-page")
+    cursor_p = os.path.join(state_dir, f"defaced-cursor-{site}.txt")
+    try:
+        last = int(open(cursor_p).read().strip() or "0")
+    except (OSError, ValueError):
+        last = 0
+    if rid <= last:
+        return 0                                 # this row already alerted
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        with open(os.path.join(state_dir, f"msg-minicpm-defaced-{site}.txt"),
+                  "w") as fh:
+            fh.write(f"minicpm DEFACED ALERT: {entry.get('url')} — verdict="
+                     f"{verdict} sim={sim if sim is not None else '?'} "
+                     f"run_id={rid} at {utcnow().isoformat(timespec='seconds')}"
+                     " (verify: monitorlib.py status)")
+        with open(cursor_p, "w") as fh:
+            fh.write(str(rid))
+    except OSError:
+        pass
+    run = subprocess_run or (lambda *a, **k: __import__("subprocess").run(*a, **k))
+    run(["systemctl", "start", f"mpw-page@minicpm-defaced-{site}.service"],
+        check=False)
+    return 1
 
 
 def cmd_status(args) -> int:

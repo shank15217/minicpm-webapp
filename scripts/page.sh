@@ -79,11 +79,21 @@ if [ "$LAST" != "0" ] && [ $((NOW - LAST)) -lt "$COOLDOWN" ]; then
 fi
 
 FIRST_HHMM=$(date -u -d "@$FIRST" +%H:%M 2>/dev/null || date -u +%H:%M)
-MSG="mpw ALERT: unit $UNIT failed on $(hostname) at $(date -u +%FT%TZ)"
-if [ "${SUPPRESSED:-0}" -gt 0 ]; then
-    MSG="$MSG — plus $SUPPRESSED more failures since $FIRST_HHMM UTC (per-unit cooldown active)"
+# Message override: B.0 defacement alerts carry the site URL + verdict +
+# sim (written by monitorlib.classify_and_alert); the storm law and
+# cooldown below apply unchanged - per-SITE instances make it per-site.
+if [ -f "$STATE_DIR/msg-$SAFE.txt" ]; then
+    MSG=$(cat "$STATE_DIR/msg-$SAFE.txt")
+    if [ "${SUPPRESSED:-0}" -gt 0 ]; then
+        MSG="$MSG — plus $SUPPRESSED more failures since $FIRST_HHMM UTC (per-unit cooldown active)"
+    fi
 else
-    MSG="$MSG; see: journalctl -u $UNIT -n 50"
+    MSG="mpw ALERT: unit $UNIT failed on $(hostname) at $(date -u +%FT%TZ)"
+    if [ "${SUPPRESSED:-0}" -gt 0 ]; then
+        MSG="$MSG — plus $SUPPRESSED more failures since $FIRST_HHMM UTC (per-unit cooldown active)"
+    else
+        MSG="$MSG; see: journalctl -u $UNIT -n 50"
+    fi
 fi
 post "$MSG"
 printf '%s\n%s\n%s\n' "$NOW" "$NOW" 0 > "$STAMP"
