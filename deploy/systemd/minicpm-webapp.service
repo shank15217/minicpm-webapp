@@ -1,19 +1,37 @@
-# minicpm-webapp FastAPI server. Edit User=, WorkingDirectory=, PATH, and
-# Environment= lines to match your install. See docs/DEPLOY.md step 4.
+# minicpm-webapp FastAPI server — prod instance on pvellm (192.168.35.17).
+# W11 (Oct-25 re-scope): the UNIT is the launcher. Interactive starts are
+# dev-only; env that lives only in a shell rots silently (46h blind towers
+# + crossed mmproj — HANDOFF-minicpm-9 Addenda).
+#
+# Tower topology since Oct-25: towers are REMOTE hosts, not local units:
+#   fast   :8080 -> pvellm2.nellienet.win (192.168.35.36), mmproj f16
+#   detail :8081 -> pvellm3.nellienet.win (192.168.35.22), mmproj f16-4x
+# Hostnames are MANDATORY, not style: raw IP literals die at the S2 SSRF
+# gate (TARGET_NOT_ALLOWED on shipping check_target, verified 2026-10-25;
+# the *.nellienet.win glob admits these hosts). Do NOT "fix" a gate refusal
+# by widening MPW_ALLOW_TARGETS with IP literals — that is the self-lockout
+# path; /health.gate_lockout names refusals, it is not a rumor.
+# No Wants=/After= on minicpm-llama@ anymore: those units belong on the
+# TOWER hosts; their local absence must never gate app start.
+
 [Unit]
 Description=minicpm-webapp synthetic website health monitor
-After=network-online.target minicpm-llama@8080.service minicpm-llama@8081.service
-Wants=minicpm-llama@8080.service minicpm-llama@8081.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=root
-WorkingDirectory=/opt/minicpm-webapp
+WorkingDirectory=/root/minicpm-webapp
 Environment=PATH=/root/.local/bin:/usr/bin:/bin
 Environment=PORT=8000
-# v0.3 will add API_KEY auth; until then keep this off the open network:
-Environment=HOST=127.0.0.1
-ExecStart=/root/.local/bin/uv run uvicorn app:app --host ${HOST} --port ${PORT}
-Restart=on-failure
+# Prod serves the LAN; a localhost bind would hide /health from every
+# remote audit (that blindness is how a 46h outage read as "fine").
+Environment=HOST=0.0.0.0
+Environment=LLAMA_SERVER_FAST=http://pvellm2.nellienet.win:8080/v1/chat/completions
+Environment=LLAMA_SERVER_DETAIL=http://pvellm3.nellienet.win:8081/v1/chat/completions
+ExecStart=/root/minicpm-webapp/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+# W11 rule: Restart=always (on-failure leaves clean-exit deaths silent).
+Restart=always
 RestartSec=5
 
 [Install]

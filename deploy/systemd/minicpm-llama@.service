@@ -1,18 +1,34 @@
-# llama-server for MiniCPM-V, instantiated per port:
-#   minicpm-llama@8080  -> 16x mmproj (fast)
-#   minicpm-llama@8081  -> 4x mmproj (detail)
-# Edit User=, MODEL_DIR, and LLAMA_BIN before enabling.
+# llama-server MiniCPM-V tower, instantiated per port. Installed on the
+# TOWER hosts (Oct-25 topology): @8080 on pvellm2, @8081 on pvellm3.
+# Port truth (README + tests/test_tower_orientation +
+# scripts/tower_orientation_probe.py):
+#   :8080 = mmproj-model-f16.gguf    (fast,   ~64 tok/tile)
+#   :8081 = mmproj-model-f16-4x.gguf (detail, ~256 tok/tile)
+# The case-map below PINS that truth in the unit: a relaunch can no longer
+# land a crossed mmproj pair (Oct-25 pre-state measured crossed: 2602 tok
+# on :8080 vs 682 on :8081; acceptance is the inversion, 8080 < 8081).
+#
+# Flags wrap the operator's live launch commands VERBATIM (-c 16384, -fa
+# on, --reasoning on --jinja --chat-template-kwargs, -lv 4). Model-flag
+# changes get their own change; never smuggle edits into a unit migration.
+# Retired defaults (localhost bind, -c 8192, -ngl 99) belonged to the
+# same-host era; the pair now SERVES REMOTE app hosts, so bind is 0.0.0.0
+# on the lab LAN (35.0/24 only — RoCE 151/24 stays model-to-model traffic).
+
 [Unit]
-Description=llama-server MiniCPM-V (port %i)
+Description=llama-server MiniCPM-V tower (port %i)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=root
-Environment=LLAMA_BIN=/usr/local/bin/llama-server
-Environment=MODEL_DIR=/opt/models/MiniCPM-V-4.7
+Environment=LLAMA_BIN=/AITOOLCHAIN/llama.cpp/build/bin/llama-server
+Environment=MODEL_DIR=/AITOOLCHAIN/models/MiniCPM-V-4.7
 Environment=GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf
-ExecStart=/bin/sh -c 'case "%i" in 8080) M="$MODEL_DIR/mmproj-model-f16.gguf";; 8081) M="$MODEL_DIR/mmproj-model-f16-4x.gguf";; *) echo "minicpm-llama@: expected 8080 or 8081, got %i" >&2; exit 1;; esac; exec "$LLAMA_BIN" -m "$MODEL_DIR/$GGUF" --mmproj "$M" --host 127.0.0.1 --port %i -c 8192 -ngl 99'
-Restart=on-failure
+ExecStart=/bin/sh -c "case \"%i\" in 8080) M=\"$MODEL_DIR/mmproj-model-f16.gguf\";; 8081) M=\"$MODEL_DIR/mmproj-model-f16-4x.gguf\";; *) echo \"minicpm-llama@: expected 8080 or 8081, got %i\" >&2; exit 1;; esac; exec \"$LLAMA_BIN\" -m \"$MODEL_DIR/$GGUF\" --mmproj \"$M\" -c 16384 -fa on --reasoning on --jinja --chat-template-kwargs '{\"preserve_thinking\":true}' --host 0.0.0.0 --port %i -lv 4"
+# W11: units stop the dying; the app-host tower-reachability stale-check
+# stops the silence. Both are required — this file is only half the fix.
+Restart=always
 RestartSec=5
 
 [Install]
