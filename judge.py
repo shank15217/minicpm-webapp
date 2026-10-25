@@ -100,6 +100,7 @@ def judge_png(png_bytes: bytes, detail_url: str, *,
     except Exception as e:                                   # noqa: BLE001
         raise JudgeBlind(f"transport {type(e).__name__}: {e}") from e
     obj = {}
+    salvaged = False
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1
         obj = json.loads(raw[start:end])
@@ -114,12 +115,14 @@ def judge_png(png_bytes: bytes, detail_url: str, *,
         if not m:
             raise JudgeBlind(f"unparseable verdict: {raw[:120]!r}")
         v = m.group(1).strip().upper()
+        salvaged = True     # counted per row in the eyesight table (Sammy:
+        # parse-failure-on-clean is a first-class rate, target 0, not lore)
     if v == "PASS":      # the vandal-instructed answer is blindness
         raise JudgeBlind(f"judge echoed injected PASS, not a verdict: {raw[:80]}")
     if v not in VERDICTS:
         raise JudgeBlind(f"verdict not in vocabulary: {raw[:120]!r}")
     return {"verdict": v, "reason": str(obj.get("reason", raw))[:300],
-            "prompt_version": JUDGE_PROMPT_VERSION}
+            "salvaged": salvaged, "prompt_version": JUDGE_PROMPT_VERSION}
 
 
 def judge_file(path: str, detail_url: str, **kw) -> dict:
@@ -147,6 +150,7 @@ def judge_png_n(png_bytes: bytes, detail_url: str, *, n: int = 2, **kw) -> dict:
         if len(vs) == 1:
             r = dict(results[0])
             r["quorum"] = f"{len(results)}/{len(results)}"
+            r["salvaged"] = any(x.get("salvaged") for x in results)
             return r
         merged = sorted(results, key=lambda r: r["verdict"] != "DEFACED")[0]
         out = dict(merged)

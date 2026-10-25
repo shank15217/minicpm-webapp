@@ -77,6 +77,21 @@ def record_heartbeat(con, site: str, status: str, elapsed: float,
     con.commit()
 
 
+def live_pred(con) -> str:
+    """Plant-purity law (Sammy 2026-10-25, label-that-bites #3): synthetic
+    rows — QA controls AND validation plants — must be invisible to every
+    product reader. The `kind` column exists to be filtered; a label the
+    counter can't see is folklore with a column on it. Degrades to '' on
+    legacy stores without kind (never OperationalError)."""
+    try:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(run_history)")}
+    except sqlite3.OperationalError:
+        return ""
+    if "kind" not in cols:
+        return ""
+    return " AND COALESCE(kind,'check') NOT IN ('control','qa-plant')"
+
+
 def latest_heartbeat(con, site: str):
     row = con.execute("SELECT ts, status, elapsed_s, run_history_id FROM heartbeat"
                       " WHERE site = ? ORDER BY ts DESC, rowid DESC LIMIT 1", (site,)).fetchone()
@@ -248,7 +263,7 @@ def classify_and_alert(con, site: str, entry: dict, subprocess_run=None) -> int:
     try:
         row = con.execute(
             "SELECT id, verdict, det_similarity FROM run_history"
-            " WHERE url=? ORDER BY id DESC LIMIT 1", (entry.get("url"),)).fetchone()
+            " WHERE url=?" + live_pred(con) + " ORDER BY id DESC LIMIT 1", (entry.get("url"),)).fetchone()
     except sqlite3.OperationalError:
         return 0                                 # legacy store without verdict columns
     if not row or row[1] != "DEFACED":           # sole day-one pageable
@@ -280,6 +295,34 @@ def classify_and_alert(con, site: str, entry: dict, subprocess_run=None) -> int:
     return 1
 
 
+def _verify_alarm(con, rid: int) -> int:
+    """Alarm authenticity as a query (Sammy/Quinn flip item 2): every page
+    cites run_id=N (E3 ships); this answers 'is that row real?' Exit law:
+    0 REAL / 2 SYNTHETIC (control or plant — report, don't obey) /
+    3 NO SUCH ROW (a page citing it does not verify at all)."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(run_history)")}
+    fields = [c for c in ("ts", "url", "verdict", "kind", "det_similarity") if c in cols]
+    row = con.execute(f"SELECT {','.join(fields)} FROM run_history WHERE id=?",
+                      (rid,)).fetchone()
+    if row is None:
+        print(f"row {rid}: NO SUCH ROW — a page citing this id does not "
+              "verify against the source; report it, do not obey it")
+        con.close()
+        return 3
+    d = dict(zip(fields, row))
+    kind = d.get("kind") or "check"
+    if kind in ("control", "qa-plant"):
+        print(f"row {rid}: SYNTHETIC (kind={kind}) — NOT a product verdict; "
+              f"url={d.get('url')} ts={d.get('ts')}")
+        con.close()
+        return 2
+    print(f"row {rid}: REAL — url={d.get('url')} ts={d.get('ts')} "
+          f"verdict={d.get('verdict') if d.get('verdict') is not None else 'none'} "
+          f"sim={d.get('det_similarity', '?')}")
+    con.close()
+    return 0
+
+
 def cmd_status(args) -> int:
     """One-line-per-site answer to the user ruling (2026-10-25):
     up? serving content? not defaced? - with confidence and loud BLIND.
@@ -287,8 +330,10 @@ def cmd_status(args) -> int:
     stale; same ceiling constant as app.py (never a second truth). rc=1
     only on up/content failures - defacement-risk is the alert chain's
     job (pager), this surface INFORMS."""
-    idx = json.load(open(args.index))["baselines"]
     con = connect(args.db)
+    if getattr(args, "verify", None) is not None:
+        return _verify_alarm(con, args.verify)
+    idx = json.load(open(args.index))["baselines"]
     now = utcnow()
     try:
         det_pass = float(os.environ.get("DET_PASS_SIM", "0.995"))
@@ -307,7 +352,7 @@ def cmd_status(args) -> int:
              ("BLIND" if (hb and hb[1] != "OK" and fresh) else "STALE/BLIND")
         row = con.execute(
             "SELECT ts,status,det_similarity,det_changed_bands,capture_sanity,det_band_sims"
-            " FROM run_history WHERE url=? ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+            " FROM run_history WHERE url=?" + live_pred(con) + " ORDER BY id DESC LIMIT 1", (url,)).fetchone()
         if row is None:
             content, integ, detail = "NO-DATA", "UNKNOWN", "no analyze rows yet"
         else:
@@ -337,7 +382,8 @@ def cmd_status(args) -> int:
                 integ, detail = "DEFACEMENT-RISK:HIGH", dist + ("" if nbands > 1 else " SINGLE-BAND-SHAPE")
         if up != "UP" or content not in ("OK",):
             rc = 1
-        n = con.execute("SELECT COUNT(*) FROM run_history WHERE url=? AND det_similarity IS NOT NULL", (url,)).fetchone()[0]
+        n = con.execute("SELECT COUNT(*) FROM run_history WHERE url=?"
+                        " AND det_similarity IS NOT NULL" + live_pred(con), (url,)).fetchone()[0]
         conf = "low(n<3)" if n < 3 else "med(global-ceiling,untrained)"
         print(f"{site[:18]:<18} {up:<10} {content:<10} {integ:<22} conf={conf} {detail[:60]}")
     con.close()
@@ -397,9 +443,13 @@ def main(argv=None) -> int:
                    help="baselines index; entries marked paused are not "
                         "counted stale (required in the stale unit)")
     s.set_defaults(fn=cmd_stale)
-    st = sub.add_parser("status", help="up/content/integrity per site (user DoD)")
-    st.add_argument("--index", required=True)
+    st = sub.add_parser("status", help="up/content/integrity per site (user DoD); "
+                        "--verify <run_id> answers 'is this page citation real?'")
+    st.add_argument("--index", default=None, help="required unless --verify")
     st.add_argument("--db", required=True)
+    st.add_argument("--verify", type=int, default=None, metavar="RUN_ID",
+                    help="print the stored row behind a page citation; "
+                         "rc 0 REAL / 2 SYNTHETIC (report, don't obey) / 3 no such row")
     st.add_argument("--cadence", type=int, default=360)
     st.add_argument("--grace", type=int, default=90)
     st.set_defaults(fn=cmd_status)
@@ -409,6 +459,8 @@ def main(argv=None) -> int:
     p.add_argument("--apply", action="store_true")
     p.set_defaults(fn=cmd_prune)
     args = ap.parse_args(argv)
+    if getattr(args, "fn", None) is cmd_status and args.verify is None and not args.index:
+        ap.error("status needs --index (unless --verify RUN_ID)")
     return args.fn(args)
 
 

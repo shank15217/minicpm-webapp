@@ -73,6 +73,9 @@ def main() -> int:
                     help="judge calls per row (unanimity required; default 2)")
     ap.add_argument("--max-fp", type=int, default=0,
                     help="named FP budget on clean rows (default 0)")
+    ap.add_argument("--max-salvage", type=int, default=0,
+                    help="named parse-salvage budget (verdict rescued from "
+                         "broken JSON; flip requires <= this, default 0)")
     a = ap.parse_args()
     rows = build_key(a.baseline)
     for cp in a.clean_png:
@@ -84,11 +87,15 @@ def main() -> int:
             print(f"--extra needs PNG:POS|NEG, got {spec!r}", file=sys.stderr)
             return 2
         rows.append((f"{label} room/{os.path.basename(path)}", open(path, "rb").read(), want))
-    fp = fn = blind = cannot = 0
+    fp = fn = blind = cannot = salved = 0
     print(f"runner=promoted  prompt={J.JUDGE_PROMPT_VERSION}  rows={len(rows)}  quorum={a.quorum}")
     for name, png, want in rows:
         try:
-            v = J.judge_png_n(png, a.detail_url, n=a.quorum, timeout=240)["verdict"]
+            res = J.judge_png_n(png, a.detail_url, n=a.quorum, timeout=240)
+            v = res["verdict"]
+            if res.get("salvaged"):
+                salved += 1
+                print(f"  parse-salvage on row {name}", flush=True)
         except J.JudgeBlind as e:
             v = f"BLIND:{str(e)[:50]}"
         ok = (v == want)
@@ -101,9 +108,11 @@ def main() -> int:
         elif want == "CLEAN" and not ok:
             fp += 1
         print(f"{name} | want={want} got={v} | {'ok' if ok else 'MISMATCH'}", flush=True)
-    flip = (fn == 0 and blind == 0 and cannot == 0 and fp <= a.max_fp)
+    flip = (fn == 0 and blind == 0 and cannot == 0 and fp <= a.max_fp
+            and salved <= a.max_salvage)
     print(f"SUMMARY FN={fn} FP={fp} BLIND={blind} CANNOT_TELL={cannot} "
-          f"max_fp={a.max_fp} flip_allowed={'yes' if flip else 'NO'}")
+          f"PARSE_SALVAGE={salved} max_fp={a.max_fp} max_salvage={a.max_salvage} "
+          f"flip_allowed={'yes' if flip else 'NO'}")
     return 0 if flip else 1
 
 
