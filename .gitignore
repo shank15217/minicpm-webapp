@@ -7,3 +7,7 @@ baselines/index.json
 .DS_Store
 baselines/runs.db
 baselines/*.db
+# stray db lands in the repo root when monitor is run from the wrong cwd
+# (prod 2026-10-19: 0-byte runs.db, the `?? runs.db` QA-8 defect class):
+/runs.db
+/*.db

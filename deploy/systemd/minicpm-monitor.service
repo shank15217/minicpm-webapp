@@ -11,6 +11,14 @@
 #   # watcher-watcher (deadline alert; also fires at boot after missed windows):
 #   systemctl --user enable --now minicpm-monitor-stale.timer
 # Enable user lingering so timers run without a login session:  loginctl enable-linger $USER
+#
+# ROOT deploy (prod pvellm): install at SYSTEM level instead — cp both
+# .service and both .timer to /etc/systemd/system/, then
+#   systemctl daemon-reload
+#   systemctl enable --now minicpm-monitor.timer minicpm-monitor-stale.timer
+# (no lingering ritual needed; the units carry no user-only directives).
+# W11 closure rule: the run timer stops the DYING of watching; the STALE
+# timer stops the SILENCE. Both installed or W11 is half-open — say which.
 
 [Unit]
 Description=minicpm-webapp monitor: analyze every baselined site, write TERMINAL heartbeat
