@@ -48,9 +48,16 @@ pipeline that produced it would have produced a page had it been red.*
 **PAGER IS LIVE (2026-10-25, `pager=tg`):** first deliveries 07:32:41Z
 (acceptance test-fire) and 07:33:48Z (first real-unit page: an unplanned
 backup failure that became its own proof); storm law verified both
-branches within one hour (delivered + coalesced). **pager_day CANDIDATE
-= 2026-10-25, stamp is Quinn's after her acceptance pass** — with which
-RC >= max(Nov 24, Nov 24) collapses to a pure calendar date.
+branches within one hour (delivered + coalesced). **pager_day STAMPED
+2026-10-25 by @qaquinn (five-item acceptance PASS at `4bef148`, her
+hands).** Date arithmetic priced in (Sammy, adopted): both AND terms
+land **2026-11-24** — a cliff, not a cushion, zero slack in max().
+Day-validity semantics decided BEFORE week three: **a counted day is a
+day whose CANARY digest landed in the chat** (daily success digest from
+the backup unit's ExecStartPost); a pager-outage day never enters the
+count of 30 — neither skip nor reset drama, and the unmonitored-pager
+recursion (a dead pager cannot page about itself) is closed by the same
+line.
 **BACKUP IS LIVE + DRILLED (2026-10-25, `backup=gateway-disk`):**
 nightly timer with day-one OnFailure page, online-sqlite snapshot,
 restore drill sha256 8/8 + row-count 179/58 exact into throwaway dir;

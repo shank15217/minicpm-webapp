@@ -12,4 +12,7 @@ OnFailure=mpw-page@%N.service
 Type=oneshot
 Environment=REMOTE=mpwbackup@192.168.35.209:/srv/mpwbackup
 ExecStart=/bin/bash /root/minicpm-webapp/scripts/backup_baselines.sh /root/minicpm-webapp/baselines
+# Daily canary digest (only on success): proves the pager path delivered
+# today and defines day-validity for the 30-day clock (Sammy 2026-10-25).
+ExecStartPost=/bin/bash -c 'C=$(ssh mpw-gw "ls -1 /srv/mpwbackup/baselines-*.tgz 2>/dev/null | wc -l"); S=$(ssh mpw-gw "sha256sum $(ls -t /srv/mpwbackup/baselines-*.tgz | head -1) | cut -c1-16"); /bin/sh /root/minicpm-webapp/scripts/canary.sh "$C" "$S"'
 IOSchedulingClass=idle

@@ -69,7 +69,17 @@ one**. Runs.db is snapshotted via python-stdlib sqlite online-backup
 into staging before tar (hot-tar tears DBs silently; drill finding).
 Restore drill executed same day: sha256 8/8 match, row counts 179/58
 exact, integrity_check ok, into throwaway dir only. Failure domain:
-survives loss of pvellm, not of the LAN/site.
+survives loss of pvellm, not of the LAN/site. Drill-doc footnote (Sammy):
+archives stamped :48/:57/35:20 on 2026-10-25 are the failure-plant burst
+frozen in the dir — rotation eats them in 14 days, not duplicates.
+
+**Drift check + canary (LIVE 2026-10-25):** `minicpm-drift-check.timer`
+daily 08:10Z pages on any `deploy/systemd/*` ≠ `/etc` copy or prod behind
+`origin/main` on running code (fixtures for both classes committed). The
+backup's `ExecStartPost` sends a daily **CANARY digest** ("backup done,
+dailies=N, newest-sha=…") — the day-validity token for the 30-day clock
+and the pager's own proof-of-life: no canary in chat = that day is not
+counted, no argument needed.
 
 **Baseline re-capture: still SUSPENDED** (2026-10-19 capture-defect trio +
 amazon churn open): re-check order boot receipt → fhlb/amazon check rows →

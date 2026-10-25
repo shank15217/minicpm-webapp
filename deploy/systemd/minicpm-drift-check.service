@@ -1,0 +1,9 @@
+[Unit]
+Description=minicpm deploy/ vs /etc drift check (committed!=deployed guard)
+# Fails loud on any drift; the (live) pager is the consumer. See
+# scripts/drift_check.sh header for the two pinned fixtures.
+OnFailure=mpw-page@%N.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /root/minicpm-webapp/scripts/drift_check.sh /root/minicpm-webapp

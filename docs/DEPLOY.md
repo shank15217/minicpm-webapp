@@ -178,6 +178,20 @@ curl -s -X POST localhost:8000/analyze -F 'url=https://your-baseline-site/' \
      -F 'mode=detail' | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status"), d.get("verification_quality"))'
 ```
 
+**Fetch-first, both directions (rule extended 2026-10-25):** installs from
+git fetch this turn, every time — AND a committed+pushed fix is NOT
+deployed until the host pulled and `/etc/systemd/system/` copies were
+refreshed + `daemon-reload`. The pager debuted running the pre-fix
+`page.sh` (`4803e14` committed, host never pulled): "committed" wearing
+"deployed" clothes is W11's quieter cousin. Prose rots, hashes don't —
+which is why `minicpm-drift-check.timer` (daily, Persistent, pages via
+`OnFailure=mpw-page@%N`) exists: it `cmp`s every tracked
+`deploy/systemd/*` against its `/etc` copy and fails loud when prod is
+behind `origin/main` on RUNNING code (`deploy/`, `scripts/`, `*.py`);
+docs-only behind-deltas note without paging, because deploy is gated by
+protocol. Both failure classes are pinned by committed fixtures in
+`tests/test_drift_check.py`.
+
 Two notes:
 
 - The migration is **additive and idempotent** — a second startup on an

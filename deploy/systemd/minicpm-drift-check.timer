@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily drift check timer
+
+[Timer]
+OnCalendar=*-*-* 08:10:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
