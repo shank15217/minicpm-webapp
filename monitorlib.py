@@ -245,9 +245,12 @@ def classify_and_alert(con, site: str, entry: dict, subprocess_run=None) -> int:
     """
     if entry.get("paused"):
         return 0
-    row = con.execute(
-        "SELECT id, verdict, det_similarity FROM run_history"
-        " WHERE url=? ORDER BY id DESC LIMIT 1", (entry.get("url"),)).fetchone()
+    try:
+        row = con.execute(
+            "SELECT id, verdict, det_similarity FROM run_history"
+            " WHERE url=? ORDER BY id DESC LIMIT 1", (entry.get("url"),)).fetchone()
+    except sqlite3.OperationalError:
+        return 0                                 # legacy store without verdict columns
     if not row or row[1] != "DEFACED":           # sole day-one pageable
         return 0
     rid, verdict, sim = row

@@ -27,7 +27,8 @@ def _db(tmp_path):
     con = monitorlib.connect(str(db))
     # cmd_run's best-effort row-id pointer touches run_history; give it
     # the minimal shape (the real one is app.py's init_run_db).
-    con.execute("CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY, url TEXT)")
+    con.execute("CREATE TABLE IF NOT EXISTS run_history (id INTEGER PRIMARY KEY, url TEXT,"
+                " verdict TEXT, det_similarity REAL)")
     con.commit()
     con.close()
     return str(db)
