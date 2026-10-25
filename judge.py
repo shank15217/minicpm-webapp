@@ -125,12 +125,13 @@ def judge_png_n(png_bytes: bytes, detail_url: str, *, n: int = 2, **kw) -> dict:
     wins; any BLIND among them => verdict CANNOT_TELL (loud-flag class,
     never a silent CLEAN); all BLIND => raise JudgeBlind (S1 page).
     Attacker-perturbable singles can't steer a unanimous quorum."""
-    results, blind = [], 0
+    results, blind, causes = [], 0, []
     for _ in range(max(1, n)):
         try:
             results.append(judge_png(png_bytes, detail_url, **kw))
-        except JudgeBlind:
+        except JudgeBlind as e:
             blind += 1
+            causes.append(str(e)[:120])
     if blind == 0:
         vs = {r["verdict"] for r in results}
         if len(vs) == 1:
@@ -151,7 +152,7 @@ def judge_png_n(png_bytes: bytes, detail_url: str, *, n: int = 2, **kw) -> dict:
         out["reason"] = f"transient blindness {blind}/{n} calls (one parseable: {results[0]['verdict'] if results else '-'})"[:300]
         out["quorum"] = f"blind {blind}/{n}"
         return out
-    raise JudgeBlind(f"all {n} judge calls blind")
+    raise JudgeBlind(f"all {n} judge calls blind: {causes[0] if causes else '?'}")
 
 
 if __name__ == "__main__":
