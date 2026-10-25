@@ -39,8 +39,16 @@ STAMP="$STATE_DIR/$SAFE.state"
 NOW=$(date +%s)
 
 post() {  # $1 = message body; URL/token come from env ONLY (never argv)
+    body="$1"
     if [ "${MPW_PAGE_STYLE:-}" = "tg" ]; then
-        curl -fsS -m 15 --data-urlencode "text=$1" "$MPW_PAGE_URL"
+        # TG quirk (measured 2026-10-25): POST query strings are IGNORED;
+        # chat_id must ride in the form body or sendMessage 400s.
+        if [ -n "${MPW_PAGE_CHAT_ID:-}" ]; then
+            curl -fsS -m 15 --data-urlencode "chat_id=$MPW_PAGE_CHAT_ID" \
+                 --data-urlencode "text=$body" "$MPW_PAGE_URL"
+        else
+            curl -fsS -m 15 --data-urlencode "text=$body" "$MPW_PAGE_URL"
+        fi
     elif [ -n "${MPW_PAGE_TOKEN:-}" ]; then
         curl -fsS -m 15 -H "Title: minicpm-webapp alert" \
              -H "Authorization: Bearer $MPW_PAGE_TOKEN" \
