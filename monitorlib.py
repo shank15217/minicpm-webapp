@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -221,6 +222,59 @@ def cmd_stale(args) -> int:
     return rc
 
 
+def cmd_status(args) -> int:
+    """One-line-per-site answer to the user ruling (2026-10-25):
+    up? serving content? not defaced? - with confidence and loud BLIND.
+    Offline join of heartbeat x latest run_history; same freshness law as
+    stale; same ceiling constant as app.py (never a second truth). rc=1
+    only on up/content failures - defacement-risk is the alert chain's
+    job (pager), this surface INFORMS."""
+    idx = json.load(open(args.index))["baselines"]
+    con = connect(args.db)
+    now = utcnow()
+    try:
+        det_pass = float(os.environ.get("DET_PASS_SIM", "0.995"))
+    except ValueError:
+        det_pass = 0.995
+    rc = 0
+    print(f"{'SITE':<18} {'UP':<10} {'CONTENT':<10} {'INTEGRITY':<22} detail")
+    for site, entry in sorted(idx.items()):
+        url = entry.get("url")
+        if entry.get("paused"):
+            print(f"{site[:18]:<18} PAUSED ({entry['paused']})")
+            continue
+        hb = latest_heartbeat(con, site)
+        fresh = not is_stale(hb[0] if hb else None, now, args.cadence, args.grace)
+        up = "UP" if (fresh and hb and hb[1] == "OK") else \
+             ("BLIND" if (hb and hb[1] != "OK" and fresh) else "STALE/BLIND")
+        row = con.execute(
+            "SELECT ts,status,det_similarity,det_changed_bands,capture_sanity"
+            " FROM run_history WHERE url=? ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+        if row is None:
+            content, integ, detail = "NO-DATA", "UNKNOWN", "no analyze rows yet"
+        else:
+            ts, st, sim, bands, sanity = row
+            nbands = len(json.loads(bands or "[]"))
+            blanks = len(json.loads(sanity or "{}").get("blank_bands", []))
+            content = "OK" if (st == "OK" and blanks == 0) else \
+                      ("BLANK-PAGE" if blanks else "FAIL")
+            if sim is None:
+                integ, detail = "UNKNOWN(no-det)", ""
+            elif sim >= det_pass:
+                integ, detail = f"CLEAN(sim={sim:.3f})", f"n_bands_changed={nbands}"
+            elif sim >= 0.80:
+                integ, detail = f"DRIFT-ELEV(sim={sim:.3f})", f"{nbands} band(s) changed - benign carousel churn is the known cause on this roster; ceiling layer (untrained) must graduate to separate"
+            else:
+                integ, detail = f"DEFACEMENT-RISK:HIGH(sim={sim:.3f})", f"{nbands} band(s) changed"
+        if up != "UP" or content not in ("OK",):
+            rc = 1
+        n = con.execute("SELECT COUNT(*) FROM run_history WHERE url=? AND det_similarity IS NOT NULL", (url,)).fetchone()[0]
+        conf = "low(n<3)" if n < 3 else "med(global-ceiling,untrained)"
+        print(f"{site[:18]:<18} {up:<10} {content:<10} {integ:<22} conf={conf} {detail[:60]}")
+    con.close()
+    return rc
+
+
 def cmd_prune(args) -> int:
     """Evidence-safe: delete ONLY plain-OK, non-control check rows older than
     cutoff. Non-OK statuses, verdicts, error_codes, control rows: kept."""
@@ -274,6 +328,12 @@ def main(argv=None) -> int:
                    help="baselines index; entries marked paused are not "
                         "counted stale (required in the stale unit)")
     s.set_defaults(fn=cmd_stale)
+    st = sub.add_parser("status", help="up/content/integrity per site (user DoD)")
+    st.add_argument("--index", required=True)
+    st.add_argument("--db", required=True)
+    st.add_argument("--cadence", type=int, default=360)
+    st.add_argument("--grace", type=int, default=90)
+    st.set_defaults(fn=cmd_status)
     p = sub.add_parser("prune")
     p.add_argument("--db", required=True)
     p.add_argument("--keep-days", type=int, default=30)
