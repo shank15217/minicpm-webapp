@@ -71,7 +71,8 @@ async def main():
                 shot = await page.screenshot(full_page=True, type="png")
                 d = detdiff.page_diff(png.read_bytes(), shot, threshold=0.995)
                 try:  # shadow metric (spatial-ceiling fit); never breaks batch
-                    _bm = json.dumps(detdiff.block_mae_shadow(png.read_bytes(), shot))
+                    _bm = json.dumps(detdiff.block_mae_shadow(
+                        png.read_bytes(), shot, window_px=GRIDWIN_PX))
                 except Exception:
                     _bm = None
                 try:  # mean grid (persistence corpus; LIVE luma, no baseline)

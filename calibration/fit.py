@@ -36,7 +36,9 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-CURRENT_REGIME = "prescroll-4"  # strict equality; changed regimes quarantine
+CURRENT_REGIME = "prescroll-4+gridwin2560"  # strict equality; changed regimes quarantine
+# ATOMIC WITH rig.CAPTURE_REGIME (Oct-25 gridwin): a rig bump without this
+# bump silently starves every fit to zero rows; a test pins the equality.
 
 
 # Standing quarantine (Oct-20 import-incident batch, QA ruling): preserved
@@ -111,6 +113,7 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int = 48,
         min_days: int = 5) -> dict:
     per_key: dict[str, list[list[int]]] = defaultdict(list)
     meta: dict[str, dict] = {}
+    shapes: dict[str, set] = defaultdict(set)
     spans: dict[str, list] = defaultdict(list)
     excluded = defaultdict(int)
     for r, g, quiet, why in load_all(path):
@@ -119,9 +122,21 @@ def fit(path: Path, min_rows: int, k: float, floor: int, cap: int = 48,
             continue
         key = r.get("baseline_key") or r.get("baseline_sha", "")[:16]
         vals = list(base64.b64decode(g["b64"]))
+        shapes[key].add((g["cols"], g["rows"]))
         per_key[key].append(vals)
         spans[key].append(r.get("ts", ""))
         meta[key] = {"size": g["size"], "cols": g["cols"], "rows": g["rows"]}
+
+    # SINGLE-SHAPE GUARD (Sammy ruling, Oct-25 r5): cellwise means between
+    # grids of different (cols,rows) are arithmetic between DIFFERENT page
+    # regions — a regime-equality filter does not catch it, and gridwin's
+    # min(H,h) collapse rows guarantee the mix for amazon. Mixed-shape
+    # cohorts are EXCLUDED WITH A NAMED BLOCKER, never blended; the last
+    # row's meta no longer silently overwrites the cohort's shape.
+    for key in list(per_key):
+        if len(shapes[key]) > 1:
+            excluded[f"mixed_g64_shape:{key[:12]}"] = len(per_key[key])
+            del per_key[key]
 
     out = {"fitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "regime": CURRENT_REGIME,

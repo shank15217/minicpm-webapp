@@ -151,7 +151,8 @@ def page_diff(baseline_bytes: bytes, live_bytes: bytes,
     }
 
 
-def block_mae_sig(a_bytes: bytes, b_bytes: bytes, size: int = 64) -> dict:
+def block_mae_sig(a_bytes: bytes, b_bytes: bytes, size: int = 64,
+                  window_px: int | None = None) -> dict:
     """Shadow metric (spatial-noise-ceiling fit, Oct-20): per-block mean
     absolute luma error on the overlap region, page coordinates. Global
     band scalars dilute localized edits (a 200x40 wire-number swap is
@@ -167,6 +168,16 @@ def block_mae_sig(a_bytes: bytes, b_bytes: bytes, size: int = 64) -> dict:
         ia = ia.resize((1280, int(ia.height * 1280 / ia.width)))
     if ib.width != 1280:
         ib = ib.resize((1280, int(ib.height * 1280 / ib.width)))
+    if window_px is not None:
+        # GRIDWIN parity (Sammy ruling, Oct-25 r5): the regime string must
+        # describe EVERY grid on the row. Same top-anchored crop as the
+        # mean grid; collapses below H keep their own height (min(H,h))
+        # and STILL differ in shape — fit's single-shape guard excludes
+        # those cohorts by name; the window never launders them.
+        if ia.height > window_px:
+            ia = ia.crop((0, 0, ia.width, window_px))
+        if ib.height > window_px:
+            ib = ib.crop((0, 0, ib.width, window_px))
     rows = min(ia.height, ib.height) // size
     cols = 1280 // size
     diff = ImageChops.difference(ia, ib)
@@ -181,18 +192,22 @@ def block_mae_sig(a_bytes: bytes, b_bytes: bytes, size: int = 64) -> dict:
             "b64": base64.b64encode(bytes(vals)).decode()}
 
 
-def block_mae_shadow(a_bytes: bytes, b_bytes: bytes) -> dict:
+def block_mae_shadow(a_bytes: bytes, b_bytes: bytes,
+                     window_px: int | None = None) -> dict:
     """Compact shadow payload for cohort rows (Oct-20 schema ask): full grid
     at 64px + top-64 blocks at 16px with page coords + the censoring floor
     (value of the 64th block = every omitted 16px block is <= this, which
-    is right-censored data, standard for ceiling fitting). ~4 KB/row."""
-    fine = block_mae_sig(a_bytes, b_bytes, size=16)
+    is right-censored data, standard for ceiling fitting). ~4 KB/row.
+    window_px: GRIDWIN parity — applied to BOTH grids; t16 coords become
+    window-relative under a windowed regime (the regime string covers it).
+    """
+    fine = block_mae_sig(a_bytes, b_bytes, size=16, window_px=window_px)
     fv = list(base64.b64decode(fine["b64"]))
     cols = fine["cols"]
     order = sorted(range(len(fv)), key=lambda i: fv[i], reverse=True)[:64]
     top = [[i % cols, i // cols, fv[i]] for i in order]
     floor16 = fv[order[-1]] if len(order) == 64 else 0
-    coarse = block_mae_sig(a_bytes, b_bytes, size=64)
+    coarse = block_mae_sig(a_bytes, b_bytes, size=64, window_px=window_px)
     return {"g64": coarse, "t16": top, "floor16": floor16}
 
 
