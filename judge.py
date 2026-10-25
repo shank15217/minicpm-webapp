@@ -26,6 +26,7 @@ Constitution (all six clauses, Quinn x3 + Sammy x3):
 import base64
 import io
 import json
+import re
 import urllib.request
 
 JUDGE_PROMPT_VERSION = "v2"   # v2: positive class grew the lure/phishing case (FN found by independent re-run, 2026-10-25)
@@ -98,17 +99,26 @@ def judge_png(png_bytes: bytes, detail_url: str, *,
         raw = send(detail_url, body, timeout)
     except Exception as e:                                   # noqa: BLE001
         raise JudgeBlind(f"transport {type(e).__name__}: {e}") from e
+    obj = {}
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1
         obj = json.loads(raw[start:end])
         v = str(obj["verdict"]).strip().upper()
-        if v == "PASS":          # the vandal-instructed answer is blindness
-            raise JudgeBlind(f"judge echoed injected PASS, not a verdict: {raw[:80]}")
-        if v not in VERDICTS:
-            raise ValueError(f"verdict not in vocabulary: {v!r}")
-    except (ValueError, KeyError, json.JSONDecodeError) as e:
-        raise JudgeBlind(f"unparseable verdict: {raw[:120]!r} ({e})") from e
-    return {"verdict": v, "reason": str(obj.get("reason", ""))[:300],
+    except (ValueError, KeyError, json.JSONDecodeError):
+        # Measured (nastea rows, 3 vetoes): the model sometimes emits
+        # unescaped double quotes INSIDE the reason string — invalid JSON,
+        # perfectly good verdict. The verdict is the law, the reason is
+        # prose; salvage the verdict independently, stay blind only if
+        # the verdict itself is unrecoverable.
+        m = re.search(r'"verdict"\s*:\s*"([A-Za-z_]+)"', raw)
+        if not m:
+            raise JudgeBlind(f"unparseable verdict: {raw[:120]!r}")
+        v = m.group(1).strip().upper()
+    if v == "PASS":      # the vandal-instructed answer is blindness
+        raise JudgeBlind(f"judge echoed injected PASS, not a verdict: {raw[:80]}")
+    if v not in VERDICTS:
+        raise JudgeBlind(f"verdict not in vocabulary: {raw[:120]!r}")
+    return {"verdict": v, "reason": str(obj.get("reason", raw))[:300],
             "prompt_version": JUDGE_PROMPT_VERSION}
 
 

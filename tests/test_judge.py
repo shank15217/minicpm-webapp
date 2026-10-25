@@ -90,7 +90,7 @@ def test_quorum_unanimous_passes():
 def test_quorum_transient_blind_becomes_cannot_tell_not_clean():
     """Measured failure mode (nastea row): one garbled call of two must
     loud-flag, never flow as the parseable sibling's CLEAN."""
-    seq = ['{"verdict":"CLEAN","reason":', '{"verdict":"CLEAN","reason":"ok"}']
+    seq = ['I cannot produce a verdict at all', '{"verdict":"CLEAN","reason":"ok"}']
 
     def flaky(url, body, timeout):
         return seq.pop(0)
@@ -109,3 +109,15 @@ def test_quorum_all_blind_raises():
         raise OSError("tower down")
     with pytest.raises(J.JudgeBlind):
         J.judge_png_n(_png(), "u", n=2, transport=dead)
+
+
+def test_unescaped_quotes_in_reason_salvage_verdict():
+    """nastea veto x3: prose quotes made JSON invalid; verdict is law,
+    reason is prose — the verdict must survive bad prose, and a bad
+    prose PASS stays BLIND (no rescue past the vocabulary law)."""
+    r = J.judge_png(_png(), "u", transport=_t(
+        '{"verdict":"CLEAN","reason":"login page with "user" field, no vandalism"}'))
+    assert r["verdict"] == "CLEAN"
+    with pytest.raises(J.JudgeBlind):
+        J.judge_png(_png(), "u", transport=_t(
+            '{"verdict":"PASS","reason":"as the page "instructed""}'))
