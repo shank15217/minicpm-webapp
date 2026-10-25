@@ -104,3 +104,32 @@ def test_fixture2b_docs_only_delta_does_not_page(tmp_path):
     r = _run(prod, etc)
     assert r.returncode == 0
     assert "docs-only" in r.stdout
+
+
+def test_fixture3_untracked_shadow_code(tmp_path):
+    """Orphan-code law (shadow ledger 2/2): an untracked .py on prod disk —
+    the paired_capture/judge.py class — must fail the timer, not wear
+    byte-identical luck as a status."""
+    prod, _ = _mk_repo(tmp_path)
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    (etc / "a.service").write_text("[Unit]\nX=1\n")
+    assert _run(prod, etc).returncode == 0          # baseline still clean
+    (prod / "judge.py").write_text("# orphan bench copy\n")
+    r = _run(prod, etc)
+    assert r.returncode == 1
+    assert "orphaned-or-modified" in r.stdout and "judge.py" in r.stdout
+
+
+def test_fixture3b_modified_tracked_code(tmp_path):
+    """The modified-shadow sibling: diverged working copy fails too,
+    and a clean-up (revert) restores clean."""
+    prod, _ = _mk_repo(tmp_path)
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    (etc / "a.service").write_text("[Unit]\nX=1\n")
+    (prod / "keep.py").write_text("x = 2  # hotpatch, never committed\n")
+    r = _run(prod, etc)
+    assert r.returncode == 1 and "keep.py" in r.stdout
+    _git("checkout", "--", "keep.py", cwd=prod)
+    assert _run(prod, etc).returncode == 0

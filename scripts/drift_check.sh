@@ -31,5 +31,18 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
         fi
     fi
 fi
+# orphan-code law (2026-10-25, shadow ledger 2/2): untracked or modified
+# *.py/*.sh in the working tree is "code older-or-orphaned-than-HEAD" —
+# two live instances (paired_capture, judge.py on prod disk) both only
+# harmless by byte-comparison luck. A shadow copy nobody can prove is
+# identical must fail the timer, not wear luck as a status.
+if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    shadow=$(git -C "$REPO" status --porcelain -- '*.py' '*.sh' || true)
+    if [ -n "$shadow" ]; then
+        echo "DRIFT: untracked/modified code files in $REPO (orphaned-or-modified vs HEAD):"
+        echo "$shadow"
+        fail=1
+    fi
+fi
 [ "$fail" = "0" ] && echo "drift-check: clean"
 exit "$fail"
