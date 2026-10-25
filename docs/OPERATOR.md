@@ -194,3 +194,17 @@ every "green" claim names a test file + sha verifiable from origin;
 fix-forward, no history rewrites; three independent hosts re-run every
 major claim; the room's own mistakes (a piped-exit masked a red suite,
 a glob hit a stale tmp store) are filed in the ledger, not buried.
+
+## Alert-channel hygiene (law, 2026-10-25 — user saw a plant and had to ask)
+- Validation pages that name a REAL site id (the `minicpm-defaced-<key>`
+  namespace) are indistinguishable from real alarms to the human at the
+  other end. Tonight's B.0 proof-pages for nastea/truebee/example read
+  exactly like defacement alerts; the user checked a clean site because
+  of our wording. That is a product defect, not a documentation gap.
+- Rules from now on: (1) test-triggered pages use the `mpw-page@qa-*`
+  namespace and their body begins `TEST — validation traffic`;
+  (2) real site ids never appear in a plant's unit name;
+  (3) every plant row lands `kind='qa-plant'` stamped at insert time
+  (tonight's 4 rows retro-stamped 2026-10-25); (4) any validation burst
+  is announced in the team chat BEFORE it pages, so the first reader is
+  a teammate, not the customer.
