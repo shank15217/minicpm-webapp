@@ -248,24 +248,35 @@ def cmd_status(args) -> int:
         up = "UP" if (fresh and hb and hb[1] == "OK") else \
              ("BLIND" if (hb and hb[1] != "OK" and fresh) else "STALE/BLIND")
         row = con.execute(
-            "SELECT ts,status,det_similarity,det_changed_bands,capture_sanity"
+            "SELECT ts,status,det_similarity,det_changed_bands,capture_sanity,det_band_sims"
             " FROM run_history WHERE url=? ORDER BY id DESC LIMIT 1", (url,)).fetchone()
         if row is None:
             content, integ, detail = "NO-DATA", "UNKNOWN", "no analyze rows yet"
         else:
-            ts, st, sim, bands, sanity = row
+            ts, st, sim, bands, sanity, bsims = row
+            band_list = json.loads(bsims or "[]")
+            band_list.sort()
+            med = band_list[len(band_list) // 2] if band_list else None
             nbands = len(json.loads(bands or "[]"))
             blanks = len(json.loads(sanity or "{}").get("blank_bands", []))
             content = "OK" if (st == "OK" and blanks == 0) else \
                       ("BLANK-PAGE" if blanks else "FAIL")
+            # min-of-bands is the CURRENT page_sim law (detdiff.py:103);
+            # the DISTRIBUTION is shown beside it so one jittering carousel
+            # band (min low, med ~1.0) can never again launder itself as a
+            # page-level verdict without showing its face (Quinn clause
+            # 2026-10-25: no folklore with numbers on it).
+            dist = (f"min={sim:.3f} med={med:.3f} bands={sorted(json.loads(bands or '[]'))[:4]}"
+                    if sim is not None and med is not None else "")
             if sim is None:
                 integ, detail = "UNKNOWN(no-det)", ""
             elif sim >= det_pass:
-                integ, detail = f"CLEAN(sim={sim:.3f})", f"n_bands_changed={nbands}"
+                integ, detail = "CLEAN", dist
             elif sim >= 0.80:
-                integ, detail = f"DRIFT-ELEV(sim={sim:.3f})", f"{nbands} band(s) changed - benign carousel churn is the known cause on this roster; ceiling layer (untrained) must graduate to separate"
+                integ, detail = "DRIFT-ELEV", dist + (" SINGLE-BAND-SHAPE"
+                    if med is not None and med >= det_pass and nbands <= 2 else "")
             else:
-                integ, detail = f"DEFACEMENT-RISK:HIGH(sim={sim:.3f})", f"{nbands} band(s) changed"
+                integ, detail = "DEFACEMENT-RISK:HIGH", dist + ("" if nbands > 1 else " SINGLE-BAND-SHAPE")
         if up != "UP" or content not in ("OK",):
             rc = 1
         n = con.execute("SELECT COUNT(*) FROM run_history WHERE url=? AND det_similarity IS NOT NULL", (url,)).fetchone()[0]
