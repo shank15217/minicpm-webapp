@@ -126,14 +126,21 @@ TOWERS_PROBES = ("fast", "detail", "16x", "4x")
 def towers_health(base_url: str, timeout: int = 15):
     """Record the /health gather verdict as site="towers" (Sammy hole,
     Oct-25; Quinn scope edit): the narrator is the ONLY tower traffic in
-    /analyze and is skipped while det says "identical" — a dead tower on
-    det-quiet sites keeps every site heartbeat OK forever. The four
-    probes already exist in the app's /health gather (app.py:1679);
-    their answer was discarded. Record it: non-OK unless EVERY probe
-    reads exactly "ok". Stale logic unchanged — cmd_stale is per-site
-    already (monitorlib.py:141-159, Quinn verified); the towers row is
-    row #9 in that loop, and test_masking fixtures pin both directions
-    so a future "simplification" of the per-site loop is a test failure.
+    /analyze and is skipped while det says "identical".
+
+    DOCTRINE (witnessed in the live plant 2026-10-25, adopted verbatim
+    after a retraction + counter-retraction): this row is the SOLE
+    UNCONDITIONAL blindness layer. Site rows detect tower death only
+    CONDITIONALLY — only sites with contemporaneous change attempt
+    narration and surface HTTP_ERROR; during the plant, six of nine rows
+    read OK (amazon included) while all four probes sat in ConnectError.
+    A future maintainer who reads "site rows cover it" will prune this
+    row and stay green in CI; the masking fixtures in
+    tests/test_gridwin_and_towers.py pin the correct premise and are
+    load-bearing forever, not cosmetic.
+    Record the gather's answer (app.py:1679): non-OK unless EVERY probe
+    reads exactly "ok". cmd_stale's per-site aggregation (141-159) is
+    pre-existing correct behavior — unchanged.
     """
     req = urllib.request.Request(base_url.rstrip("/") + "/health")
     try:

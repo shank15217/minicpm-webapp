@@ -9,10 +9,12 @@
 
 [Unit]
 Description=minicpm-webapp staleness deadline check (fail = scheduler went silent)
-# Page routing (W11 half #3): fires mpw-page@ on every red. Becomes live
-# when this copy is (re)installed — /etc copy refreshes with the gated
-# pull + cp + daemon-reload, same cohort event.
-OnFailure=mpw-page@%n.service
+# Page routing (W11 half #3): fires mpw-page@ on every red. %N (not %n):
+# %n double-suffixes the instance (mpw-page@minicpm-monitor-stale.service.
+# service) which made the gate's own first journal grep MISS the pager
+# firing - an operator at 2 AM would conclude the pager never ran (Quinn,
+# 2026-10-25 plant). Becomes live when this copy is (re)installed.
+OnFailure=mpw-page@%N.service
 
 [Service]
 Type=oneshot
