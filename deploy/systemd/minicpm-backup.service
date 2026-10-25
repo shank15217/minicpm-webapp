@@ -1,0 +1,15 @@
+[Unit]
+Description=minicpm-webapp baseline backup to gateway-disk
+# Destination decision 2026-10-25 (@user): gateway-disk; seaweedfs left
+# alone by the same decision ("lab, not a service"). Failure domain,
+# stated honestly: survives LOSS OF PVELLM (separate machine, 14 daily
+# archives); does NOT survive loss of the LAN/site.
+# OnFailure is not decorative: a silently-failing backup job is W11
+# relocated (Sammy), so backup-failure pages like everything else.
+OnFailure=mpw-page@%N.service
+
+[Service]
+Type=oneshot
+Environment=REMOTE=mpwbackup@192.168.35.209:/srv/mpwbackup
+ExecStart=/bin/bash /root/minicpm-webapp/scripts/backup_baselines.sh /root/minicpm-webapp/baselines
+IOSchedulingClass=idle
