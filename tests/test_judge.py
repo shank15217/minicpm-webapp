@@ -75,3 +75,37 @@ def test_single_image_only():
     J.judge_png(_png(), "u", transport=cap)
     parts = seen["body"]["messages"][0]["content"]
     assert sum(1 for p in parts if p["type"] == "image_url") == 1
+
+
+def test_quorum_unanimous_passes():
+    calls = {"n": 0}
+
+    def ok(url, body, timeout):
+        calls["n"] += 1
+        return '{"verdict":"CLEAN","reason":"x"}'
+    r = J.judge_png_n(_png(), "u", n=2, transport=ok)
+    assert r["verdict"] == "CLEAN" and r["quorum"] == "2/2" and calls["n"] == 2
+
+
+def test_quorum_transient_blind_becomes_cannot_tell_not_clean():
+    """Measured failure mode (nastea row): one garbled call of two must
+    loud-flag, never flow as the parseable sibling's CLEAN."""
+    seq = ['{"verdict":"CLEAN","reason":', '{"verdict":"CLEAN","reason":"ok"}']
+
+    def flaky(url, body, timeout):
+        return seq.pop(0)
+    r = J.judge_png_n(_png(), "u", n=2, transport=flaky)
+    assert r["verdict"] == "CANNOT_TELL"
+
+
+def test_quorum_split_is_cannot_tell():
+    seq = ['{"verdict":"CLEAN","reason":"a"}', '{"verdict":"DEFACED","reason":"b"}']
+    r = J.judge_png_n(_png(), "u", n=2, transport=lambda u, b, t: seq.pop(0))
+    assert r["verdict"] == "CANNOT_TELL" and "split" in r["reason"]
+
+
+def test_quorum_all_blind_raises():
+    def dead(url, body, timeout):
+        raise OSError("tower down")
+    with pytest.raises(J.JudgeBlind):
+        J.judge_png_n(_png(), "u", n=2, transport=dead)

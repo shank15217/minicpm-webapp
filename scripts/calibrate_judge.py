@@ -69,6 +69,10 @@ def main() -> int:
     ap.add_argument("--detail-url", required=True)
     ap.add_argument("--clean-png", action="append", default=[],
                     help="extra NEG row from a live capture png")
+    ap.add_argument("--quorum", type=int, default=2,
+                    help="judge calls per row (unanimity required; default 2)")
+    ap.add_argument("--max-fp", type=int, default=0,
+                    help="named FP budget on clean rows (default 0)")
     a = ap.parse_args()
     rows = build_key(a.baseline)
     for cp in a.clean_png:
@@ -80,25 +84,27 @@ def main() -> int:
             print(f"--extra needs PNG:POS|NEG, got {spec!r}", file=sys.stderr)
             return 2
         rows.append((f"{label} room/{os.path.basename(path)}", open(path, "rb").read(), want))
-    fp = fn = blind = 0
-    print(f"runner=promoted  prompt={J.JUDGE_PROMPT_VERSION}  rows={len(rows)}")
+    fp = fn = blind = cannot = 0
+    print(f"runner=promoted  prompt={J.JUDGE_PROMPT_VERSION}  rows={len(rows)}  quorum={a.quorum}")
     for name, png, want in rows:
         try:
-            got = J.judge_png(png, a.detail_url, timeout=240)
-            v = got["verdict"]
+            v = J.judge_png_n(png, a.detail_url, n=a.quorum, timeout=240)["verdict"]
         except J.JudgeBlind as e:
             v = f"BLIND:{str(e)[:50]}"
         ok = (v == want)
         if v.startswith("BLIND"):
             blind += 1
+        elif v == "CANNOT_TELL":
+            cannot += 1        # loud-flag outcome: not FP, not a pass, not flip-worthy
         elif want == "DEFACED" and not ok:
             fn += 1
         elif want == "CLEAN" and not ok:
             fp += 1
         print(f"{name} | want={want} got={v} | {'ok' if ok else 'MISMATCH'}", flush=True)
-    print(f"SUMMARY FN={fn} FP={fp} BLIND={blind} "
-          f"flip_allowed={'yes' if fn == 0 and blind == 0 else 'NO'}")
-    return 0 if (fn == 0 and blind == 0) else 1
+    flip = (fn == 0 and blind == 0 and cannot == 0 and fp <= a.max_fp)
+    print(f"SUMMARY FN={fn} FP={fp} BLIND={blind} CANNOT_TELL={cannot} "
+          f"max_fp={a.max_fp} flip_allowed={'yes' if flip else 'NO'}")
+    return 0 if flip else 1
 
 
 if __name__ == "__main__":

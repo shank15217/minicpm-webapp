@@ -117,6 +117,43 @@ def judge_file(path: str, detail_url: str, **kw) -> dict:
         return judge_png(fh.read(), detail_url, **kw)
 
 
+def judge_png_n(png_bytes: bytes, detail_url: str, *, n: int = 2, **kw) -> dict:
+    """Quorum judge: one parse failure is TRANSIENT blindness (measured:
+    the 1B emits truncated JSON at temp-0 nondeterministically — nastea
+    row garbled once, clean next call). Do not retry-until-green — that
+    hides the blindness class. Take n calls: unanimous real verdict
+    wins; any BLIND among them => verdict CANNOT_TELL (loud-flag class,
+    never a silent CLEAN); all BLIND => raise JudgeBlind (S1 page).
+    Attacker-perturbable singles can't steer a unanimous quorum."""
+    results, blind = [], 0
+    for _ in range(max(1, n)):
+        try:
+            results.append(judge_png(png_bytes, detail_url, **kw))
+        except JudgeBlind:
+            blind += 1
+    if blind == 0:
+        vs = {r["verdict"] for r in results}
+        if len(vs) == 1:
+            r = dict(results[0])
+            r["quorum"] = f"{len(results)}/{len(results)}"
+            return r
+        merged = sorted(results, key=lambda r: r["verdict"] != "DEFACED")[0]
+        out = dict(merged)
+        out["verdict"] = "CANNOT_TELL"
+        out["reason"] = ("quorum split: " + " vs ".join(
+            sorted(f"{x['verdict']}({x['reason'][:60]})" for x in results)))[:300]
+        out["quorum"] = "split"
+        return out
+    if blind < n:
+        r = dict(results[0]) if results else {"reason": ""}
+        out = dict(r)
+        out["verdict"] = "CANNOT_TELL"
+        out["reason"] = f"transient blindness {blind}/{n} calls (one parseable: {results[0]['verdict'] if results else '-'})"[:300]
+        out["quorum"] = f"blind {blind}/{n}"
+        return out
+    raise JudgeBlind(f"all {n} judge calls blind")
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="single-image defacement judge (advisory until calibrated)")
