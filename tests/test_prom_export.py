@@ -118,3 +118,59 @@ def test_cert_change_recorded(tmp_path, monkeypatch, capsys):
         export_prom.main()
     sys.argv = old
     assert 'mpw_cert_changed{site="aaaaaaaaaaaaaaaa",url="https://a/"} 1' in out.read_text()
+
+
+FIXDIR = os.path.join(os.path.dirname(__file__), "fixtures", "certs")
+
+
+def test_parse_der_real_world_shapes():
+    """Sammy law after three prod first-run crashes: fixture shapes are
+    pinned from REAL certs — LE nested RDNs, public CA, self-signed."""
+    import export_prom
+    le = export_prom.parse_der(open(os.path.join(FIXDIR, "chain_letsencrypt.der"), "rb").read())
+    assert le["issuer"] == "Let's Encrypt" and le["expiry_ts"] > 0 and le["serial"]
+    dc = export_prom.parse_der(open(os.path.join(FIXDIR, "chain_digicert.der"), "rb").read())
+    assert dc["issuer"] == "DigiCert Inc"
+    ss = export_prom.parse_der(open(os.path.join(FIXDIR, "selfsigned.der"), "rb").read())
+    assert ss["issuer"] == "Lab QA" and len(ss["fingerprint"]) == 64
+    # fingerprints are stable identities: same DER, same hash forever
+    assert le["fingerprint"] == export_prom.parse_der(
+        open(os.path.join(FIXDIR, "chain_letsencrypt.der"), "rb").read())["fingerprint"]
+
+
+def test_freshness_gauge_and_ceiling_provenance(tmp_path, monkeypatch, capsys):
+    text = _export(tmp_path, monkeypatch, capsys)
+    assert "mpw_data_last_run_timestamp_seconds{instance=\"mpw\"} " in text
+    # all sites untrained here: ceiling = global default, calibrated = 0
+    assert 'mpw_site_calibrated{site="aaaaaaaaaaaaaaaa"' in text
+    cal = [ln for ln in text.splitlines() if ln.startswith("mpw_site_calibrated{")][0]
+    assert cal.endswith(" 0")
+    assert 'state="MODIFIED"' in text  # b at 0.5 vs 0.995 default
+
+
+def test_trained_ceiling_suppresses_modified(tmp_path, monkeypatch, capsys):
+    """QA fixture (Sammy+Quinn): sim below a TRAINED per-site ceiling must
+    still flip MODIFIED, and calibrated=1 must be visible so the alert
+    rule can require it."""
+    db, idx = _store(tmp_path)
+    import json
+    d = json.load(open(idx))
+    d["baselines"]["bbbbbbbbbbbbbbbb"]["ceiling"] = 0.45   # trained below 0.5 sim
+    json.dump(d, open(idx, "w"))
+    monkeypatch.setattr(export_prom, "cert_facts", lambda url, timeout=10: dict(FAKE))
+    out = tmp_path / "m2.prom"
+    import io
+    from contextlib import redirect_stdout
+    old = sys.argv
+    sys.argv = ["export_prom", "--index", idx, "--db", db, "--out", str(out)]
+    with redirect_stdout(io.StringIO()):
+        export_prom.main()
+    sys.argv = old
+    text = out.read_text()
+    assert 'mpw_site_ceiling{site="bbbbbbbbbbbbbbbb"' in text and "0.4500" in text
+    cal = [ln for ln in text.splitlines()
+           if ln.startswith('mpw_site_calibrated{site="bbbb')][0]
+    assert cal.endswith(" 1")
+    st = [ln for ln in text.splitlines()
+          if ln.startswith('mpw_site_state{site="bbbb') and ln.endswith(" 1")][0]
+    assert 'state="OK"' in st, "trained ceiling below sim = site is OK, not MODIFIED"

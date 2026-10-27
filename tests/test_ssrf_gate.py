@@ -120,10 +120,13 @@ def test_gate_lockout_watchdog_reports_divergence(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "INDEX_PATH", d / "index.json")
     monkeypatch.setenv("MPW_ALLOW_TARGETS", "*.nellienet.win")
     app_mod.save_baseline("https://ok.nellienet.win/", PNG1)
-    app_mod.save_baseline("https://www.fhlb-of.com/", PNG1)  # locked out
+    # D8 (clone rehearsal): fhlb is named in monitor.toml, so it can NO
+    # LONGER be locked out — that is the fix, not a regression. The
+    # watchdog's job survives for hosts the box monitors without naming.
+    app_mod.save_baseline("https://locked-unlisted.example/", PNG1)  # locked out
     with TestClient(app_mod.app) as c:
         h = c.get("/health").json()
-        assert h["gate_lockout"] == ["https://www.fhlb-of.com/"]
+        assert h["gate_lockout"] == ["https://locked-unlisted.example/"]
 
 
 PNG1 = b"\x89PNG\r\n\x1a\n" + b"0" * 32

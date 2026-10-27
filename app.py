@@ -836,6 +836,41 @@ _UNREACHABLE_PATTERNS = [
 # Playwright layers install page.route abort-on-refused for all subrequests.
 
 
+def _monitor_toml_hosts():
+    """D8 (clone rehearsal 2026-10-27): a fresh box names its sites in
+    monitor.toml — the single source of truth — but the S2 gate only knew
+    the built-in default list, so the daily pass could capture a URL that
+    /analyze then 403'd. One posture across stages: the hosts you chose to
+    monitor are, by definition, hosts this box is allowed to analyze.
+    Pure function of config (no DNS, no network), mtime-cached; the
+    gate_lockout watchdog keeps the divergence visible if the file ever
+    becomes unreadable."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.toml")
+    try:
+        st = os.stat(p)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return []
+    if _MTW_CACHE.get("key") != key:
+        hosts = []
+        try:
+            import tomllib
+            import urllib.parse as _up
+            with open(p, "rb") as fh:
+                cfg = tomllib.load(fh)
+            for s in cfg.get("sites", []) or []:
+                h = _up.urlparse(str(s.get("url", ""))).hostname
+                if h:
+                    hosts.append(h.lower().rstrip("."))
+        except Exception:  # noqa: BLE001  malformed file: gate keeps default posture
+            hosts = []
+        _MTW_CACHE.update(key=key, hosts=hosts)
+    return _MTW_CACHE["hosts"]
+
+
+_MTW_CACHE = {}
+
+
 def _allowed_target_patterns():
     raw = os.environ.get(
         "MPW_ALLOW_TARGETS",
@@ -845,7 +880,7 @@ def _allowed_target_patterns():
         # MUST keep pace with what the box actually monitors; /health now
         # publishes gate_lockout so the divergence can never be silent again.
         "*.nellienet.win,127.0.0.1,localhost,::1,www.fhlb-of.com,www.amazon.com,example.com")
-    return [q.strip().lower() for q in raw.split(",") if q.strip()]
+    return [q.strip().lower() for q in raw.split(",") if q.strip()] + _monitor_toml_hosts()
 
 
 def _ip_of(x):
@@ -1671,12 +1706,21 @@ async def prometheus_metrics():
     from fastapi.responses import PlainTextResponse
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "metrics", "metrics.prom")
+    headers = {}
     try:
         with open(p) as fh:
             body = fh.read()
+        import email.utils
+        headers["Last-Modified"] = email.utils.formatdate(
+            os.path.getmtime(p), usegmt=True)
+        # freshness ALSO lives in the payload (mpw_data_last_run_timestamp_
+        # seconds) — headers are transport metadata scrapers may discard;
+        # the gauge is the load-bearing one (Sammy ruling), this is free
+        # for humans curling the endpoint.
     except OSError:
         body = "# metrics.prom not written yet (run scripts/export_prom.py)\n"
-    return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
+    return PlainTextResponse(body, media_type="text/plain; version=0.0.4",
+                             headers=headers)
 
 
 @app.get("/health")

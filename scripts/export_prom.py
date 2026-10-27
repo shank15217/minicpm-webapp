@@ -29,27 +29,14 @@ from monitorlib import connect, live_pred, is_stale, latest_heartbeat, utcnow  #
 DET_PASS = float(os.environ.get("DET_PASS_SIM", "0.995"))
 
 
-def cert_facts(url: str, timeout: int = 10) -> dict:
-    """Peer cert WITHOUT trust assumptions (lab hosts are self-signed):
-    unverified handshake, read the DER the server actually serves."""
-    if not url.startswith("https"):
-        return {}
-    hostport = url.split("//", 1)[-1].split("/", 1)[0]
-    host, _, port = hostport.partition(":")
-    port = int(port or 443)
+def parse_der(der: bytes) -> dict:
+    """Facts from raw DER without trust assumptions: decode with ssl's own
+    parser (getpeercert() is empty under CERT_NONE and lab certs are
+    self-signed). Real-world shapes are pinned as fixtures in
+    tests/fixtures/certs/ after three prod first-run crashes taught us
+    issuer nesting the slow way (Sammy law: the real world files its own
+    bug reports)."""
     import hashlib
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=timeout) as raw:
-        with ctx.wrap_socket(raw, server_hostname=host) as s:
-            der = s.getpeercert(True)
-    if not der:
-        return {}
-    # getpeercert() dict is EMPTY under CERT_NONE, and lab certs are
-    # self-signed (verification would fail on legit Let's Encrypt-less
-    # boxes): decode the DER ourselves via ssl's bundled decoder —
-    # same parser CPython uses, no new dependency.
     d = {}
     try:
         import ssl as _ssl
@@ -68,8 +55,8 @@ def cert_facts(url: str, timeout: int = 10) -> dict:
         pass
     iss = d.get("issuer") or ()
     issuer_val = "unknown"
-    try:  # _test_decode_cert: issuer = RDN sequences; the useful name may sit
-        # in ANY RDN (LE puts O in the 2nd) — merge all pairs, prefer O then CN
+    try:  # issuer = RDN sequences; the useful name may sit in ANY RDN
+        # (LE carries O in the 2nd) — merge all pairs, prefer O then CN
         pairs = {}
         for rdn in iss:
             pairs.update(dict(rdn))
@@ -82,6 +69,25 @@ def cert_facts(url: str, timeout: int = 10) -> dict:
             "expiry_ts": exp.timestamp() if exp else 0,
             "issuer": issuer_val,
             "serial": d.get("serialNumber", "")}
+
+
+def cert_facts(url: str, timeout: int = 10) -> dict:
+    """Peer cert the server ACTUALLY serves (unverified handshake — this is
+    an identity ledger, not a trust verdict)."""
+    if not url.startswith("https"):
+        return {}
+    hostport = url.split("//", 1)[-1].split("/", 1)[0]
+    host, _, port = hostport.partition(":")
+    port = int(port or 443)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=timeout) as raw:
+        with ctx.wrap_socket(raw, server_hostname=host) as s:
+            der = s.getpeercert(True)
+    if not der:
+        return {}
+    return parse_der(der)
 
 
 def cert_history_update(con, site: str, facts: dict) -> tuple[int, int]:
@@ -150,6 +156,24 @@ def main() -> int:
         L.append(f"{m}{{{labels}}} {v}")
 
     line("mpw_scrape_ok", "instance=\"mpw\"", 1, "exporter completed a pass")
+    # Sammy law (metrics review 2026-10-27): an exporter pass is just reading
+    # a file — scrape_ok says ALIVE, it does not say FRESH. The freshness
+    # claim must be a SERIES or it does not exist at scrape time: this gauge
+    # is set from the newest live data timestamp (last analyze/eye/heartbeat
+    # row), NOT the file mtime — a healthy-looking exporter over dead data
+    # is precisely the tidy-corpse failure this kills.
+    data_ts = 0
+    try:
+        row = con.execute("SELECT MAX(id) FROM run_history WHERE 1" + lp).fetchone()
+        if row and row[0]:
+            r2 = con.execute("SELECT ts FROM run_history WHERE id=?", (row[0],)).fetchone()
+            if r2:
+                data_ts = int(datetime.fromisoformat(r2[0]).timestamp())
+    except sqlite3.OperationalError:
+        pass
+    line("mpw_data_last_run_timestamp_seconds", "instance=\"mpw\"", data_ts,
+         "newest live run_history row; alert time()-this > 2*cadence, plus "
+         "absent(...) for: 48h for never-exported (Sammy absent-pair law)")
     for key, meta in sorted(idx.items()):
         url = meta.get("url", "")
         site = key[:16]
@@ -169,6 +193,18 @@ def main() -> int:
                  "det_similarity vs PINNED baseline: unscheduled-change signal")
         vrow = vers.get(url)
         verdict = vrow["verdict"] if vrow else None
+        # Ceiling provenance (metrics review 2026-10-27): MODIFIED is only
+        # as honest as the number it was judged against. Untrained sites
+        # carry the global default and say so — calibrated=0 means "the
+        # threshold is folklore, the confidence gauge is the signal":
+        # alert MODIFIED only `and on(site) mpw_site_calibrated == 1`.
+        ceiling = meta.get("ceiling")
+        calibrated = 1 if isinstance(ceiling, float) else 0
+        thr = ceiling if isinstance(ceiling, float) else DET_PASS
+        line("mpw_site_ceiling", lab, f"{thr:.4f}",
+             "the numeric MODIFIED was judged against")
+        line("mpw_site_calibrated", lab, calibrated,
+             "1 = per-site trained ceiling; 0 = global default (do not page on MODIFIED)")
         if verdict == "DEFACED":
             state = "DEFACED"
         elif verdict in ("BLIND-JUDGE", "CANNOT_TELL"):
@@ -177,7 +213,7 @@ def main() -> int:
             state = "DOWN"
         elif conf is None:
             state = "PENDING"
-        elif conf < DET_PASS:
+        elif conf < thr:
             state = "MODIFIED"
         else:
             state = "OK"
@@ -189,7 +225,10 @@ def main() -> int:
                  "status --verify <id> prints provenance")
         d = desc.get(url)
         if d is not None and d["raw_output"]:
-            line("mpw_site_description", f'{lab},description="{esc(str(d["raw_output"])[:180])}"',
+            # word-boundary cut (Quinn): "with a lo…" reads like a bug;
+            # a cut at whitespace reads like a summary
+            snip = str(d["raw_output"])[:180].rsplit(" ", 1)[0]
+            line("mpw_site_description", f'{lab},description="{esc(snip)}"',
                  d["id"], "vision-tower ledger; full history in state.toml")
         if url.startswith("https"):
             try:
