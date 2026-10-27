@@ -86,7 +86,9 @@ def main() -> int:
             defaced += 1
             entry = {"url": url}
             n = monitorlib.classify_and_alert(con, label.replace(" ", "_"), entry)
-            print(f"{label}: EYE SAYS DEFACED -> pager={'fired' if n else 'cooldown/absent'}")
+            print(f"{label}: EYE SAYS DEFACED -> pager="
+                  + ("delivered" if n else
+                     "NOT delivered (attempted/absent - see line above; alert stays owed)"))
         elif v == "CLEAN":
             print(f"{label}: eye CLEAN (quorum {quorum})")
         else:
@@ -99,7 +101,10 @@ def main() -> int:
         return 5
     if loud:
         return 6
-    print(f"judge_pass: all eyes clean ({defaced} defaced)")
+    if defaced:
+        print(f"judge_pass: {defaced} DEFACED (see lines above) — never call this clean")
+        return 7
+    print("judge_pass: all eyes clean")
     return 0
 
 

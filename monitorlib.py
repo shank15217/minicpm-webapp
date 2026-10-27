@@ -201,7 +201,7 @@ def cmd_run(args) -> int:
         record_heartbeat(con, site, status, time.monotonic() - t0, rid, detail)
         fired = classify_and_alert(con, site, entry)
         if fired:
-            print(f"{site} DEFACED verdict -> pager fired (instance minicpm-defaced-{site})")
+            print(f"{site} DEFACED verdict -> pager delivered (instance minicpm-defaced-{site})")
         print(f"{site} {status} {detail} run_history_id={rid}")
         rc = rc or (status != "OK")
     # Towers row LAST: its verdict comes from the same gather the app
@@ -297,13 +297,25 @@ def classify_and_alert(con, site: str, entry: dict, subprocess_run=None) -> int:
                      f"{verdict} sim={sim if sim is not None else '?'} "
                      f"run_id={rid} at {utcnow().isoformat(timespec='seconds')}"
                      " (verify: monitorlib.py status)")
+    except OSError:
+        pass
+    run = subprocess_run or (lambda *a, **k: __import__("subprocess").run(*a, **k))
+    res = run(["systemctl", "start", f"mpw-page@minicpm-defaced-{site}.service"],
+              check=False)
+    # D6 (clone rehearsal): fired must mean DELIVERED. systemctl erroring
+    # (unit absent = every cloned host on day one) is an attempt, not an
+    # alarm. The cursor advances ONLY on delivery: an undelivered alert
+    # stays owed and retries next pass.
+    delivered = getattr(res, "returncode", None) == 0
+    if not delivered:
+        print(f"{site} DEFACED verdict -> pager ATTEMPTED, NOT delivered "
+              f"(rc={getattr(res, 'returncode', '?')}; no pager unit on this host?)")
+        return 0
+    try:
         with open(cursor_p, "w") as fh:
             fh.write(str(rid))
     except OSError:
         pass
-    run = subprocess_run or (lambda *a, **k: __import__("subprocess").run(*a, **k))
-    run(["systemctl", "start", f"mpw-page@minicpm-defaced-{site}.service"],
-        check=False)
     return 1
 
 

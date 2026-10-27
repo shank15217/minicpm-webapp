@@ -55,7 +55,7 @@ def test_classify_never_pages_on_plant(tmp_path, monkeypatch):
     con, _idx, _db = _store(tmp_path)
     calls = []
     n = monitorlib.classify_and_alert(con, "siteA", {"url": "http://s/"},
-                                      subprocess_run=lambda a, check=False: calls.append(a))
+                                      subprocess_run=lambda a, check=False: (calls.append(a), type("R", (), {"returncode": 0})())[1])
     assert n == 0 and calls == []      # newest DEFACED is a plant: invisible
 
 
@@ -67,7 +67,7 @@ def test_control_still_excluded_regression(tmp_path, monkeypatch):
     calls = []
     assert monitorlib.classify_and_alert(
         con, "siteA", {"url": "http://s/"},
-        subprocess_run=lambda a, check=False: calls.append(a)) == 0
+        subprocess_run=lambda a, check=False: (calls.append(a), type("R", (), {"returncode": 0})())[1]) == 0
 
 
 def test_verify_rc_law(tmp_path, capsys):

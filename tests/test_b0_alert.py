@@ -22,9 +22,14 @@ def _rows(con, url, verdict, sim=0.4):
     con.commit()
 
 
-def _calls():
+class _Rc:
+    def __init__(self, rc=0):
+        self.returncode = rc
+
+
+def _calls(rc=0):
     calls = []
-    return calls, lambda a, check=False: calls.append(a)
+    return calls, (lambda a, check=False: (calls.append(a), _Rc(rc))[1])
 
 
 def test_defaced_pages_naming_site(tmp_path, monkeypatch):
@@ -88,3 +93,20 @@ def test_two_sites_two_instances(tmp_path, monkeypatch):
     insts = [c[2] for c in calls]
     assert insts == ["mpw-page@minicpm-defaced-sA.service",
                      "mpw-page@minicpm-defaced-sB.service"]   # two pages, own names
+
+
+def test_d6_undelivered_says_attempted_and_stays_owed(tmp_path, monkeypatch, capsys):
+    """D6 (clone rehearsal): on a host WITHOUT pager units, fired must
+    not be printed; the cursor must NOT advance (alert stays owed)."""
+    monkeypatch.setenv("MPW_PAGE_STATE_DIR", str(tmp_path))
+    con = _db(tmp_path)
+    _rows(con, "http://s/", "DEFACED")
+    calls, run = _calls(rc=5)                     # systemctl: unit not found
+    n = monitorlib.classify_and_alert(con, "siteA", {"url": "http://s/"},
+                                      subprocess_run=run)
+    assert n == 0 and len(calls) == 1             # attempted, not delivered
+    out = capsys.readouterr().out
+    assert "ATTEMPTED, NOT delivered" in out and "fired" not in out
+    n2 = monitorlib.classify_and_alert(con, "siteA", {"url": "http://s/"},
+                                       subprocess_run=run)
+    assert len(calls) == 2                        # retried: still owed
