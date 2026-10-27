@@ -33,7 +33,11 @@ def main() -> int:
         con.close()
         print("runs.db has no run_history yet - daily pass not run?", file=sys.stderr)
         return 3
-    base = STATE.split("[state]")[0].rstrip()
+    text = open(STATE).read()
+    # truncate at the previously-written metrics block, keep everything the
+    # collector wrote ([collector] model rows etc.); marker is our own header.
+    marker = "# [state] metrics:"
+    base = text.split(marker)[0].rstrip() if marker in text else text.rstrip()
     out = [base, "", "# [state] metrics: last live analyze per site (plants excluded)",
            f'[meta]', f'updated = "{datetime.now(timezone.utc).isoformat(timespec="seconds")}"', ""]
     idx = json.load(open(IDX)).get("baselines", {}) if os.path.exists(IDX) else {}
