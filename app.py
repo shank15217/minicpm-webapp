@@ -62,7 +62,14 @@ INDEX_PATH = BASELINES_DIR / "index.json"
 
 # Release version — bump at tag-at-ship (v0.5.0: SSRF+S1 gates, W10+D,
 # named-refusal contract). Disclosed in /health so socket answers version.
-VERSION = "0.5.0"
+VERSION = "0.9.0"
+# 0.6 judge module + quorum eyes; 0.7 plant purity + status --verify;
+# 0.8 clone track (installer env-guard, tower normalization, monitor.toml
+# single source, D6 delivered-not-fired, D7 no-delta-yet); 0.9 metrics
+# law: /metrics exporter, cert ledger w/ change recording, freshness as
+# a series, ceiling provenance, D8(+b) config-fed S2 gate. v1.0 = tag at
+# Quinn's all-green virgin-box rehearsal (room law: ready when the
+# rehearsal says so).
 
 
 # Quinn 2026-10-19: VERSION alone is a HEAD-lie — a process booted 9 min
