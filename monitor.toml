@@ -1,0 +1,30 @@
+# monitor.toml — clone-and-run config for the visual site monitor.
+# 1) uv run scripts/setup_sites.py --config monitor.toml   (proves towers,
+#    captures reference images, writes state.toml)
+# 2) scripts/start_app.sh  (capture+analyze service)  3) scripts/run_daily.sh
+
+[towers]
+# OpenAI-compatible endpoints. detail = the text+vision 1B that answers
+# judge/describe calls; vision optional (falls back to detail).
+detail = "http://pvellm3.nellienet.win:8081/v1"
+# vision = "http://pvellm2.nellienet.win:8081/v1"
+
+[[sites]]
+url = "https://www.fhlb-of.com/"
+name = "fhlb-home"
+
+[[sites]]
+url = "https://www.fhlb-of.com/careers/why-of/"
+name = "fhlb-careers"
+
+[[sites]]
+url = "https://truebee.nellienet.win/"
+name = "truenas-login"
+
+[[sites]]
+url = "https://nastea.nellienet.win/"
+name = "qnap-login"
+
+# [[sites]]
+# url = "https://your-app.example/login"
+# name = "app-login"
