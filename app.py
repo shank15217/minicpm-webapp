@@ -1661,6 +1661,24 @@ async def list_baselines():
     return index
 
 
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus textfile served live (user metrics law 2026-10-27):
+    the file is written by scripts/export_prom.py during the daily pass
+    and after any monitor run; scrape cadence therefore tracks the
+    monitor cadence, and a stuck exporter is itself visible as a stale
+    mpw_scrape_ok timestamp in the TSDB."""
+    from fastapi.responses import PlainTextResponse
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "metrics", "metrics.prom")
+    try:
+        with open(p) as fh:
+            body = fh.read()
+    except OSError:
+        body = "# metrics.prom not written yet (run scripts/export_prom.py)\n"
+    return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
+
+
 @app.get("/health")
 async def health():
     """Check if the llama-servers are reachable.

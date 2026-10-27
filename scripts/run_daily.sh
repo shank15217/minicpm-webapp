@@ -23,3 +23,5 @@ $PY scripts/judge_pass.py --config monitor.toml --db baselines/runs.db \
     || echo "!! judge pass reported problems above - NOT a clean eye" >&2
 $PY monitorlib.py status --index baselines/index.json --db baselines/runs.db
 $PY scripts/refresh_state.py
+# metrics law (2026-10-27): prom file refreshed with the daily pass.
+$PY scripts/export_prom.py || echo "!! export_prom failed; /metrics is stale" >&2
