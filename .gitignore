@@ -11,3 +11,5 @@ baselines/*.db
 # (prod 2026-10-19: 0-byte runs.db, the `?? runs.db` QA-8 defect class):
 /runs.db
 /*.db
+/state.toml
+/metrics/

@@ -102,12 +102,30 @@ BOOTED_AT = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+0
 #   :8081 loads mmproj-model-f16-4x.gguf -> 1851/2304 prompt tokens (detail/OCR)
 # Re-measure: POST the same image to both /v1/chat/completions and compare
 # usage.prompt_tokens; tests/test_tower_orientation.py pins this live.
-LLAMA_SERVER_FAST = (os.getenv("LLAMA_SERVER_FAST")
-                     or os.getenv("LLAMA_SERVER_16X")
-                     or "http://127.0.0.1:8080/v1/chat/completions")
-LLAMA_SERVER_DETAIL = (os.getenv("LLAMA_SERVER_DETAIL")
-                       or os.getenv("LLAMA_SERVER_4X")
-                       or "http://127.0.0.1:8081/v1/chat/completions")
+# D9 (fresh-clone rehearsal 2026-10-27, the 502): monitor.toml promises
+# "write http://host:8081 or .../v1 — both accepted everywhere", and
+# everywhere WASN'T true: start_app.sh exports the bare origin, /analyze
+# POSTs the constant verbatim -> bare origin -> 404 -> 502. Prod masked it
+# a fifth way (systemd unit hardcodes the full chat URL); the bug lived in
+# the seam between two env producers. ONE canonicalizer at import: bare,
+# /v1, or full — all become the full chat URL before anything reads it.
+def _tower_chat_url(u: str) -> str:
+    u = (u or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if u.endswith("/chat/completions"):
+        return u
+    if u.endswith("/v1"):
+        return u + "/chat/completions"
+    return u + "/v1/chat/completions"
+
+
+LLAMA_SERVER_FAST = _tower_chat_url(os.getenv("LLAMA_SERVER_FAST")
+                                    or os.getenv("LLAMA_SERVER_16X")
+                                    or "http://127.0.0.1:8080/v1/chat/completions")
+LLAMA_SERVER_DETAIL = _tower_chat_url(os.getenv("LLAMA_SERVER_DETAIL")
+                                      or os.getenv("LLAMA_SERVER_4X")
+                                      or "http://127.0.0.1:8081/v1/chat/completions")
 # v0.4 deterministic verdict layer (detdiff): page_sim at or above this
 # threshold => "identical", VLM narration skipped entirely. Provisional
 # pending v0.5 control calibration (per-baseline, per-band profiles).
