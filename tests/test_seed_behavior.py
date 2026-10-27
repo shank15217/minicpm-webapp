@@ -88,9 +88,8 @@ class TestS6ErrorAsContent:
 class TestS2Ssrf:
     """S2: fetcher follows arbitrary URLs and echoes fetched text."""
 
-    @pytest.mark.xfail(reason="DEFECT S2: /analyze url reaches internal hosts and "
-                              "echoes page_text_preview (reproduced against own "
-                              ":8080/health 2026-10-14). v0.3 egress policy -> XPASS")
+    # S2 gate (v0.3) fixed this; xfail retired at XPASS(strict)
+# 2026-10-27 instead of silently re-marking: the test now asserts.
     def test_internal_target_blocked(self):
         internal = os.environ.get("SSRF_TEST_URL", "http://127.0.0.1:8080/health")
         r = _analyze(url=internal)
