@@ -31,3 +31,30 @@ def test_gate_still_refuses_unknown_hosts(monkeypatch):
     with pytest.raises(appmod.CheckFailed) as ei:
         appmod.check_target("http://definitely-not-monitored-anywhere.test/")
     assert ei.value.code == "TARGET_NOT_ALLOWED"
+
+
+def test_d8b_tower_hosts_in_union(tmp_path, monkeypatch):
+    """Quinn's wildcard-proof fixture: a clone whose tower lives OUTSIDE
+    every default wildcard (zzz.example.org) must pass the GATE stage and
+    fail only at the network stage. Asserted on the union function's own
+    output AND on check_target with a clean env — never behind the lucky
+    *.nellienet.win default."""
+    cfg = tmp_path / "monitor.toml"
+    cfg.write_text('[towers]\ndetail = "http://zzz.example.org:8081/v1"\n'
+                   '[[sites]]\nurl = "http://my-cloned-site.example.net/"\n')
+    monkeypatch.setattr(appmod, "_MONITOR_TOML_PATH", str(cfg))
+    monkeypatch.setattr(appmod, "_MTW_CACHE", {})
+    monkeypatch.delenv("MPW_ALLOW_TARGETS", raising=False)
+    hosts = appmod._monitor_toml_hosts()
+    assert "zzz.example.org" in hosts and "my-cloned-site.example.net" in hosts
+    for url in ("http://zzz.example.org:8081/v1/chat/completions",
+                "http://my-cloned-site.example.net/"):
+        try:
+            appmod.check_target(url)          # gate passes; network may fail
+        except appmod.CheckFailed as e:
+            assert e.code != "TARGET_NOT_ALLOWED", f"D8b still alive on {url}"
+
+
+def test_d8b_repo_tower_host_present():
+    hosts = appmod._monitor_toml_hosts()
+    assert "pvellm3.nellienet.win" in hosts, "repo tower host must be in the union"

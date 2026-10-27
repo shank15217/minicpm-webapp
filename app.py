@@ -836,16 +836,24 @@ _UNREACHABLE_PATTERNS = [
 # Playwright layers install page.route abort-on-refused for all subrequests.
 
 
+_MONITOR_TOML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "monitor.toml")
+
+
 def _monitor_toml_hosts():
     """D8 (clone rehearsal 2026-10-27): a fresh box names its sites in
     monitor.toml — the single source of truth — but the S2 gate only knew
     the built-in default list, so the daily pass could capture a URL that
     /analyze then 403'd. One posture across stages: the hosts you chose to
     monitor are, by definition, hosts this box is allowed to analyze.
-    Pure function of config (no DNS, no network), mtime-cached; the
-    gate_lockout watchdog keeps the divergence visible if the file ever
-    becomes unreadable."""
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.toml")
+
+    D8b (Quinn's sharper evidence): the FIRST fix unioned [[sites]] and
+    missed [towers] — a clone pointing detail= at its own domain or LAN IP
+    got TARGET_NOT_ALLOWED on its own config line, and every in-repo test
+    hid it behind the *.nellienet.win wildcard. Both sections now feed the
+    union: sites AND the towers you named. Pure function of config (no
+    DNS, no network), mtime-cached; gate_lockout keeps divergence visible."""
+    p = _MONITOR_TOML_PATH
     try:
         st = os.stat(p)
         key = (st.st_mtime_ns, st.st_size)
@@ -858,8 +866,10 @@ def _monitor_toml_hosts():
             import urllib.parse as _up
             with open(p, "rb") as fh:
                 cfg = tomllib.load(fh)
-            for s in cfg.get("sites", []) or []:
-                h = _up.urlparse(str(s.get("url", ""))).hostname
+            urls = [str(s.get("url", "")) for s in cfg.get("sites", []) or []]
+            urls += [str(v) for v in (cfg.get("towers", {}) or {}).values()]
+            for u in urls:
+                h = _up.urlparse(u).hostname
                 if h:
                     hosts.append(h.lower().rstrip("."))
         except Exception:  # noqa: BLE001  malformed file: gate keeps default posture
