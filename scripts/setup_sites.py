@@ -53,10 +53,16 @@ def probe_tower(name: str, base: str) -> dict:
     try:
         props = _get_json(f"{base}/props")
         out["model_path"] = props.get("model_path") or props.get("model_filename")
-        out["n_ctx"] = props.get("n_ctx")
+        out["n_ctx"] = props.get("n_ctx") or props.get("n_ctx_train")
         out["total_slots"] = props.get("total_slots")
     except Exception:  # noqa: BLE001 — /props is llama.cpp-specific
         out["props"] = "unavailable (not llama.cpp?)"
+    import re
+    m = re.search(r"(\d+(?:\.\d+)?[Bb])(?:[^A-Za-z]*?)?(Q\d[A-Za-z0-9_]*)?",
+                  str(out.get("model_path", "")))
+    if m:
+        out["model_size_hint"] = (m.group(1).upper() +
+                                  (f" {m.group(2).upper()}" if m.group(2) else ""))
     return out
 
 
@@ -168,6 +174,7 @@ def main() -> int:
                f'url = "{toml_escape(info["url"])}"',
                f'model = "{toml_escape(str(info.get("model_id")))}"',
                f'model_path = "{toml_escape(str(info.get("model_path", "")))}"',
+               f'size = "{toml_escape(str(info.get("model_size_hint", "")))}"',
                f'n_ctx = {info.get("n_ctx") if isinstance(info.get("n_ctx"), int) else 0}',
                ""]
     st.append("[monitor]")

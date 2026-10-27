@@ -24,6 +24,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
     con = connect(DB)
+    con.row_factory = sqlite3.Row
     try:
         rows = {r["url"]: r for r in
                 con.execute("SELECT * FROM run_history WHERE 1" + live_pred(con) +
