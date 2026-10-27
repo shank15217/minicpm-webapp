@@ -68,8 +68,11 @@ def cert_facts(url: str, timeout: int = 10) -> dict:
         pass
     iss = d.get("issuer") or ()
     issuer_val = "unknown"
-    try:  # _test_decode_cert nests: issuer = ( ((k,v), (k,v)...), ) — first RDN;
-        pairs = dict(iss[0])        # prefer O, then CN — country is not an issuer name
+    try:  # _test_decode_cert: issuer = RDN sequences; the useful name may sit
+        # in ANY RDN (LE puts O in the 2nd) — merge all pairs, prefer O then CN
+        pairs = {}
+        for rdn in iss:
+            pairs.update(dict(rdn))
         issuer_val = pairs.get("organizationName") or pairs.get("commonName") \
             or (list(pairs.values())[-1] if pairs else "unknown")
     except (ValueError, IndexError, TypeError):
