@@ -58,7 +58,7 @@ def probe_tower(name: str, base: str) -> dict:
     except Exception:  # noqa: BLE001 — /props is llama.cpp-specific
         out["props"] = "unavailable (not llama.cpp?)"
     import re
-    m = re.search(r"(\d+(?:\.\d+)?[Bb])(?:[^A-Za-z]*?)?(Q\d[A-Za-z0-9_]*)?",
+    m = re.search(r"(\d+(?:\.\d+)?[Bb])[-_ ]?(Q\d[A-Za-z0-9_]*)?",
                   str(out.get("model_path", "")))
     if m:
         out["model_size_hint"] = (m.group(1).upper() +
