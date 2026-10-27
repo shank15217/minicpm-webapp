@@ -62,7 +62,12 @@ INDEX_PATH = BASELINES_DIR / "index.json"
 
 # Release version — bump at tag-at-ship (v0.5.0: SSRF+S1 gates, W10+D,
 # named-refusal contract). Disclosed in /health so socket answers version.
-VERSION = "0.9.0"
+VERSION = "1.0.0"  # tagged 2026-10-27 on QAQuinn's all-green virgin-clone
+# rehearsal at 92077f3 (ancestor-verified 207e329): install green w/ PIL
+# guard live catch, virgin setup_sites eye-described, bare-env seam 200,
+# run_daily end-to-end, acceptance pair + verify-by-query chain, freeze
+# fixture, exporter purity, config-fed gate, truthful version. v1.0 =
+# numbers flag, eyes decide, and every claim provably not-stale.
 # 0.6 judge module + quorum eyes; 0.7 plant purity + status --verify;
 # 0.8 clone track (installer env-guard, tower normalization, monitor.toml
 # single source, D6 delivered-not-fired, D7 no-delta-yet); 0.9 metrics
