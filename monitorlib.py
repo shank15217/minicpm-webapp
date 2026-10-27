@@ -77,6 +77,18 @@ def record_heartbeat(con, site: str, status: str, elapsed: float,
     con.commit()
 
 
+def ensure_run_history(con) -> None:
+    """Minimal mirror of app.py's run_history DDL (the app remains the
+    authority; this exists so a fresh clone's judge_pass/refresh can
+    journal BEFORE the app service has ever started)."""
+    con.execute("CREATE TABLE IF NOT EXISTS run_history ("
+                "id INTEGER PRIMARY KEY, url TEXT, ts TEXT, status TEXT,"
+                " kind TEXT, verdict TEXT, det_similarity REAL,"
+                " det_changed_bands TEXT, capture_sanity TEXT,"
+                " det_band_sims TEXT, raw_output TEXT)")
+    con.commit()
+
+
 def live_pred(con) -> str:
     """Plant-purity law (Sammy 2026-10-25, label-that-bites #3): synthetic
     rows — QA controls AND validation plants — must be invisible to every
@@ -302,6 +314,11 @@ def _verify_alarm(con, rid: int) -> int:
     3 NO SUCH ROW (a page citing it does not verify at all)."""
     cols = {r[1] for r in con.execute("PRAGMA table_info(run_history)")}
     fields = [c for c in ("ts", "url", "verdict", "kind", "det_similarity") if c in cols]
+    if not fields:
+        print(f"row {rid}: store has NO run_history schema — nothing to "
+              "verify against; report the page, do not obey it")
+        con.close()
+        return 3
     row = con.execute(f"SELECT {','.join(fields)} FROM run_history WHERE id=?",
                       (rid,)).fetchone()
     if row is None:

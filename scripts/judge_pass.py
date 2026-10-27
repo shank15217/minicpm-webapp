@@ -54,6 +54,7 @@ def main() -> int:
     chat = SS._chat(detail)
     con = monitorlib.connect(a.db)
     con.row_factory = None
+    monitorlib.ensure_run_history(con)
     blind = loud = defaced = 0
     for site in cfg.get("sites", []):
         url = site["url"]
