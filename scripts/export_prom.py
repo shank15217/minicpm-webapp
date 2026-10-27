@@ -66,10 +66,18 @@ def cert_facts(url: str, timeout: int = 10) -> dict:
         exp = datetime.strptime(d["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
     except (KeyError, ValueError):
         pass
+    iss = d.get("issuer") or ()
+    issuer_val = "unknown"
+    try:  # _test_decode_cert nests: issuer = ( ((k,v), (k,v)...), ) — first RDN;
+        pairs = dict(iss[0])        # prefer O, then CN — country is not an issuer name
+        issuer_val = pairs.get("organizationName") or pairs.get("commonName") \
+            or (list(pairs.values())[-1] if pairs else "unknown")
+    except (ValueError, IndexError, TypeError):
+        pass
     return {"fingerprint": hashlib.sha256(der).hexdigest(),
             "expiry": exp.isoformat() if exp else "",
             "expiry_ts": exp.timestamp() if exp else 0,
-            "issuer": ",".join(v for _, v in (d.get("issuer") or ())[:1] if v) or "unknown",
+            "issuer": issuer_val,
             "serial": d.get("serialNumber", "")}
 
 
