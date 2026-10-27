@@ -69,7 +69,7 @@ def cert_facts(url: str, timeout: int = 10) -> dict:
     return {"fingerprint": hashlib.sha256(der).hexdigest(),
             "expiry": exp.isoformat() if exp else "",
             "expiry_ts": exp.timestamp() if exp else 0,
-            "issuer": ",".join(v for _, v in (d.get("issuer") or ((),))[:1] if v) or "unknown",
+            "issuer": ",".join(v for _, v in (d.get("issuer") or ())[:1] if v) or "unknown",
             "serial": d.get("serialNumber", "")}
 
 
