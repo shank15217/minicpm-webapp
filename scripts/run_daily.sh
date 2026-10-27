@@ -18,5 +18,8 @@ curl -fsS --max-time 10 "$APP/health" >/dev/null 2>&1 || {
 }
 $PY monitorlib.py run --index baselines/index.json --base-url "$APP" \
     --db baselines/runs.db
+# D5: the daily standing eye - eyes decide DEFACED; blind eye exits loud.
+$PY scripts/judge_pass.py --config monitor.toml --db baselines/runs.db \
+    || echo "!! judge pass reported problems above - NOT a clean eye" >&2
 $PY monitorlib.py status --index baselines/index.json --db baselines/runs.db
 $PY scripts/refresh_state.py

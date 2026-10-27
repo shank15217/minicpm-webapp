@@ -56,6 +56,8 @@ def main() -> int:
             out.append(f'last_ts = "{r["ts"]}"')
             out.append(f'det_similarity = {sim if isinstance(sim, float) else 0.0:.4f}')
             out.append(f'integrity = "{"CLEAN" if isinstance(sim, float) and sim >= 0.995 else "REVIEW"}"')
+            if "verdict" in r.keys() and r["verdict"]:
+                out.append(f'verdict = "{r["verdict"]}"')
         out.append("")
     open(STATE, "w").write("\n".join(out) + "\n")
     con.close()

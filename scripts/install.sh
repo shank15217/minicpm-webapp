@@ -100,4 +100,15 @@ with sync_playwright() as p:
     b.close()
 EOF
 
+log "env sanity: PIL must resolve INSIDE the project venv (3rd incident of this landmine family)"
+if ! "$PROJECT_DIR/.venv/bin/python" -c "
+import PIL, sys
+ok = PIL.__file__.startswith('$PROJECT_DIR/.venv')
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    echo "ERROR: PIL resolves outside the project venv: $( "$PROJECT_DIR/.venv/bin/python" -c 'import PIL; print(PIL.__file__)' 2>&1 )" >&2
+    echo "Fix: unset PYTHONPATH (ambient 3.14 PIL shadows the venv) and re-run this script." >&2
+    exit 1
+fi
+
 log "Done. Next: llama.cpp + MiniCPM-V model (docs/DEPLOY.md), then ./scripts/start_app.sh"

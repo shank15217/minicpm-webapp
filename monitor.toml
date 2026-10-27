@@ -4,10 +4,18 @@
 # 2) scripts/start_app.sh  (capture+analyze service)  3) scripts/run_daily.sh
 
 [towers]
-# OpenAI-compatible endpoints. detail = the text+vision 1B that answers
-# judge/describe calls; vision optional (falls back to detail).
-detail = "http://pvellm3.nellienet.win:8081/v1"
-# vision = "http://pvellm2.nellienet.win:8081/v1"
+# OpenAI-compatible endpoints; write "http://host:8081" or ".../v1" —
+# both accepted everywhere (D1 fix: the old example double-appended /v1
+# and descriptions silently died). detail = the text+vision 1B that
+# answers judge/describe calls; vision optional (falls back to detail).
+detail = "http://pvellm3.nellienet.win:8081"
+# vision = "http://pvellm2.nellienet.win:8081"
+
+[judge]
+# daily standing eye, run by scripts/run_daily.sh (D5: the DEFACED word
+# must be producible by any clone, not only by prod-side tooling)
+enabled = true
+quorum = 2
 
 [[sites]]
 url = "https://www.fhlb-of.com/"

@@ -35,6 +35,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 
+def _origin(u: str) -> str:
+    """Canonical tower origin: 'http://h:8081', '.../v1' — either works
+    (D1: the shipped example said /v1 and describe appended it twice)."""
+    u = u.rstrip("/")
+    return u[:-3] if u.endswith("/v1") else u
+
+
+def _chat(u: str) -> str:
+    return _origin(u) + "/v1/chat/completions"
+
+
 def _get_json(url: str, timeout: int = 15):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return json.loads(r.read())
@@ -102,7 +113,7 @@ def describe(png_path: str, detail_base: str) -> str:
                                  "factual sentence: site type and main content."},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,"
          + base64.b64encode(buf.getvalue()).decode()}}]}]}).encode()
-    rq = urllib.request.Request(detail_base.rstrip("/") + "/v1/chat/completions",
+    rq = urllib.request.Request(_chat(detail_base),
                                 data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(rq, timeout=180) as r:
         return json.loads(r.read())["choices"][0]["message"]["content"].strip()[:300]
@@ -120,7 +131,7 @@ def main() -> int:
     cfg = tomllib.load(open(a.config, "rb"))
     towers = cfg.get("towers", {})
     if not towers.get("detail"):
-        print("monitor.toml needs [towers] detail = http://...:8081/v1", file=sys.stderr)
+        print('monitor.toml needs [towers] detail = "http://host:8081" (with or without /v1)', file=sys.stderr)
         return 2
     print("== collector: tower provenance ==")
     tower_info = {}
@@ -128,7 +139,7 @@ def main() -> int:
         u = towers.get(name)
         if not u:
             continue
-        base = u.rsplit("/v1", 1)[0]
+        base = _origin(u)
         try:
             info = probe_tower(name, base)
         except Exception as e:  # noqa: BLE001
@@ -147,7 +158,14 @@ def main() -> int:
         png = os.path.join(ROOT, "baselines", f"{key}.png")
         entry = idx["baselines"].get(key, {})
         if os.path.exists(png) and entry.get("url") == url and not a.recapture:
-            print(f"  {label}: baseline exists, kept ({key})")
+            if not entry.get("description") and towers.get("detail"):
+                try:
+                    entry["description"] = describe(png, towers["detail"])
+                    print(f"  {label}: baseline kept, description HEALED")
+                except Exception as e:  # noqa: BLE001
+                    print(f"  {label}: kept; describe failed ({type(e).__name__})")
+            else:
+                print(f"  {label}: baseline exists, kept ({key})")
         else:
             w, h = capture(url, png)
             sha = hashlib.sha256(open(png, "rb").read()).hexdigest()
