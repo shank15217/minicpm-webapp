@@ -2,11 +2,14 @@
 __pycache__/
 *.pyc
 *.pyo
-baselines/*.png
-baselines/index.json
 .DS_Store
-baselines/runs.db
-baselines/*.db
+# D12 (QA-REPORT-11): NOTHING under baselines/ was ever tracked (`git ls-files
+# baselines/` = empty) — it is pure runtime output. The old per-file patterns
+# (*.png, index.json, runs.db, *.db) leaked any new file type the runtime
+# grows into `git status --short` (prod: `?? baselines/`), breaking the
+# 207e329 law that an empty status is a machine-checkable receipt.
+# Ignore the whole dir.
+/baselines/
 # stray db lands in the repo root when monitor is run from the wrong cwd
 # (prod 2026-10-19: 0-byte runs.db, the `?? runs.db` QA-8 defect class):
 /runs.db

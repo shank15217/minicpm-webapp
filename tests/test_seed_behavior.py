@@ -25,6 +25,46 @@ BASE = os.environ.get("BASE_URL", "http://127.0.0.1:8000")
 DEAD = os.environ.get("DEAD_BACKEND_URL")  # instance started with LLAMA_SERVER_* -> dead port
 PROBE_URL = "http://example.com/"          # resolvable, benign, used for baseline CRUD
 
+# ---------------------------------------------------------------------------
+# D11 (QA-REPORT-11): these pins pin LIVE behavior. In a tower-less / app-less
+# checkout they died ConnectionRefused and masqueraded as suite noise — the
+# same failure-class as the retired xfail (a dead signal that looks red hides
+# a real one). A blanket skipif would be the opposite error: it would hide a
+# genuine regression on a box where the app IS up. So: one fixture-level
+# probe per session; skip only when the instance is truly unreachable, and
+# the skip reason carries the receipt (which URL, why, how to un-skip).
+# Network-free pins opt out with @pytest.mark.no_app.
+# ---------------------------------------------------------------------------
+_LIVE: "bool | None" = None
+
+
+def _live_app() -> bool:
+    """One-shot reachability probe of the live instance.
+
+    Any HTTP answer (even 5xx) counts as live — the pins assert on status
+    codes, so a degraded-but-running app must still RUN them, not skip them.
+    Only a connection-level failure skips.
+    """
+    global _LIVE
+    if _LIVE is None:
+        try:
+            requests.get(f"{BASE}/health", timeout=3)
+            _LIVE = True
+        except requests.RequestException:
+            _LIVE = False
+    return _LIVE
+
+
+@pytest.fixture(autouse=True)
+def require_live_app(request):
+    if "no_app" in request.keywords or _live_app():
+        return
+    pytest.skip(
+        f"D11 receipt: live instance unreachable at {BASE} "
+        "(one-shot /health probe, connection-level) — env absent, not code "
+        "broken. Point BASE_URL at a running instance to execute these pins."
+    )
+
 
 def _png(color=(220, 30, 30)):
     """1x1-ish PNG without Pillow dependency."""
@@ -66,6 +106,9 @@ class TestHealth:
 class TestS6ErrorAsContent:
     """S6: backend failure must not be returned as 200 + error prose."""
 
+    # S6 DEAD-backend pin talks only to DEAD_BACKEND_URL, not to BASE —
+    # the D11 live-app probe must not gate it.
+    @pytest.mark.no_app
     @pytest.mark.skipif(not DEAD, reason="DEAD_BACKEND_URL not set")
     def test_dead_backend_not_200(self):
         r = requests.post(f"{DEAD}/analyze",
@@ -275,6 +318,7 @@ class TestS10NoPairwiseAnywhere:
     # S10 CLOSED (v0.4.2): xfail mark removed per ritual — pairwise template is
     # gone from app.py (verified tombstone-comments-only at :72/:664); this test
     # now proves the closure and guards against reintroduction.
+    @pytest.mark.no_app  # reads app.py from disk; needs no running instance
     def test_no_pairwise_prompt_format_call_remains(self):
         src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
         assert "VERIFY_PROMPT_TEMPLATE.format(" not in src, (
