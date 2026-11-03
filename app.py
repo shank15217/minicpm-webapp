@@ -62,7 +62,12 @@ INDEX_PATH = BASELINES_DIR / "index.json"
 
 # Release version — bump at tag-at-ship (v0.5.0: SSRF+S1 gates, W10+D,
 # named-refusal contract). Disclosed in /health so socket answers version.
-VERSION = "1.0.0"  # tagged 2026-10-27 on QAQuinn's all-green virgin-clone
+VERSION = "1.0.1"  # v1.0.1: D9-D12 patch line (tower-URL canonicalizer seam,
+# D10 shipped-invocation exporter chain + unit-invocation gate test, D11
+# live-pin skip-with-receipt, D12 whole-dir baselines ignore). Tagged on
+# Quinn's all-green rehearsal at c079682 (MINICPM-QA-REPORT-12). Bump-at-tag
+# per house law; uv.lock refreshed in this same commit (D13 — a stale lock
+# dirtied virgin installs). Previous: v1.0.0 tagged 2026-10-27 on QAQuinn's all-green virgin-clone
 # rehearsal at 92077f3 (ancestor-verified 207e329): install green w/ PIL
 # guard live catch, virgin setup_sites eye-described, bare-env seam 200,
 # run_daily end-to-end, acceptance pair + verify-by-query chain, freeze
