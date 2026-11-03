@@ -29,4 +29,4 @@ Type=oneshot
 Environment=MPW_BASE=http://127.0.0.1:8000
 Environment=MPW_DIR=/root/minicpm-webapp
 Environment=MPW_PY=python3
-ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py run --base-url "$MPW_BASE" --index "$MPW_DIR/baselines/index.json" --db "$MPW_DIR/baselines/runs.db"'
+ExecStart=/bin/sh -c 'cd "$MPW_DIR" && "$MPW_PY" monitorlib.py run --base-url "$MPW_BASE" --index "$MPW_DIR/baselines/index.json" --db "$MPW_DIR/baselines/runs.db"; rc=$?; "$MPW_PY" scripts/export_prom.py --index "$MPW_DIR/baselines/index.json" --db "$MPW_DIR/baselines/runs.db" || echo "!! export_prom failed; /metrics is stale" >&2; exit $rc'

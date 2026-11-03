@@ -4,7 +4,10 @@
 #   2) capture+analyze every roster site (one analyze pass)
 #   3) health surface: up / content / integrity per site
 #   4) state.toml [state] block refreshed from the store
-# systemd users (prod pvellm) get the same via minicpm-monitor.timer;
+# systemd users (prod pvellm) get the same monitor+exporter pair via
+# minicpm-monitor.timer -> minicpm-monitor.service (ExecStart runs
+# monitorlib.py run THEN scripts/export_prom.py; D10 fix 2026-11-03:
+# the unit used to skip the exporter, freezing /metrics for a week);
 # this script is the clone-and-run path the user asked for (2026-10-25).
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

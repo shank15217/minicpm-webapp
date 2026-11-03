@@ -1739,9 +1739,12 @@ async def list_baselines():
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus textfile served live (user metrics law 2026-10-27):
-    the file is written by scripts/export_prom.py during the daily pass
-    and after any monitor run; scrape cadence therefore tracks the
-    monitor cadence, and a stuck exporter is itself visible as a stale
+    the file is written by scripts/export_prom.py at the end of every
+    monitor invocation — run_daily.sh (clone-and-run path) and the
+    minicpm-monitor systemd unit (deployed path, D10 fix 2026-11-03;
+    before that fix the unit never ran the exporter and this claim was
+    false). Scrape cadence therefore tracks the monitor cadence, and a
+    stuck exporter is itself visible as a stale
     mpw_scrape_ok timestamp in the TSDB."""
     from fastapi.responses import PlainTextResponse
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
