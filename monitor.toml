@@ -4,12 +4,13 @@
 # 2) scripts/start_app.sh  (capture+analyze service)  3) scripts/run_daily.sh
 
 [towers]
-# OpenAI-compatible endpoints; write "http://host:8081" or ".../v1" —
+# SINGLE TOWER since 2026-11-13 (user decision: keep only the capable one).
+# OpenAI-compatible endpoint; write "http://host:8081" or ".../v1" —
 # both accepted everywhere (D1 fix: the old example double-appended /v1
-# and descriptions silently died). detail = the text+vision 1B that
-# answers judge/describe calls; vision optional (falls back to detail).
+# and descriptions silently died). detail = the -4x high-detail projector
+# tower that answers every judge/describe call. A `vision =` key is
+# ignored: the fast/f16 tower is decommissioned.
 detail = "http://pvellm3.nellienet.win:8081"
-# vision = "http://pvellm2.nellienet.win:8081"
 
 [judge]
 # daily standing eye, run by scripts/run_daily.sh (D5: the DEFACED word

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# start_llama_servers.sh — start the two llama-server instances MiniCPM-V
-# vision backends the app expects:
-#   :8080 = mmproj-model-f16.gguf   (scale_factor=4 => 16x DOWNSAMPLE =>
-#           64 tok/tile  => the FAST/general tower; measured 489/612 prompt
-#           tokens vs 1851/2304 for -4x on the same image, 2026-10-17)
+# start_llama_servers.sh — start the single llama-server instance the app
+# uses (SINGLE TOWER since 2026-11-13, user decision):
 #   :8081 = mmproj-model-f16-4x.gguf (scale_factor=2 => 4x downsample =>
-#           256 tok/tile => the DETAIL/OCR tower; ~4x prefill cost)
+#           256 tok/tile => the detail tower)
+# RETRACTED as live bindings (2026-11-13): `:8080` = `mmproj-model-f16.gguf`
+# = 64 tok/tile = the `fast` side; historical same-image receipts `489/612`
+# vs `1851/2304` prompt tokens (2026-10-17) stay history.
 #   NOTE: the Oct-15 header here claimed ":8080 = more visual tokens
 #   (837 vs 228)" — RETRACTED 2026-10-17, falsified by same-image re-measure
 #   on two hosts plus GGUF header diff (user). Orientation pin:
@@ -26,17 +26,16 @@ MODEL_DIR="${MODEL_DIR:-/AITOOLCHAIN/models/MiniCPM-V-4.7}"
 # Q8_0 per owner ruling (2026-10-15): best-quality quant of MiniCPM-V 4.7.
 # Set GGUF=MiniCPM-V-4_7-1B-Q4_K_M.gguf to roll back.
 GGUF="${GGUF:-MiniCPM-V-4_7-1B-Q8_0.gguf}"
-# Tower naming note (corrected 2026-10-17): the suffix names the DOWNSAMPLE
-# factor, not the token count. f16 = 16x downsample = 64 tok/tile = CHEAPER;
-# "-4x" = 4x downsample = 256 tok/tile = MORE DETAIL. Variable names keep
-# the historical 16X/4X labels; port truth: :8080 fast, :8081 detail.
-MMPROJ_16X="${MMPROJ_16X:-mmproj-model-f16.gguf}"
+# Tower naming note: the suffix names the DOWNSAMPLE factor, not the token
+# count; "-4x" = 4x downsample = 256 tok/tile = the detail tower. Variable
+# names keep the historical labels. RETRACTED port-truth line (2026-11-13):
+# RETRACTED: `:8080` = `fast`, `:8081` = `detail` — only the detail port ships.
 MMPROJ_4X="${MMPROJ_4X:-mmproj-model-f16-4x.gguf}"
 CTX="${CTX:-8192}"
 LOGDIR="${LOGDIR:-$HOME/logs}"
 mkdir -p "$LOGDIR"
 
-for f in "$MODEL_DIR/$GGUF" "$MODEL_DIR/$MMPROJ_16X" "$MODEL_DIR/$MMPROJ_4X"; do
+for f in "$MODEL_DIR/$GGUF" "$MODEL_DIR/$MMPROJ_4X"; do
     [ -f "$f" ] || { echo "ERROR: missing $f — download models first (docs/DEPLOY.md step 2)" >&2; exit 1; }
 done
 
@@ -52,13 +51,12 @@ start_one() { # port mmproj label
         >"$LOGDIR/llama-$label.log" 2>&1 &
 }
 
-start_one 8080 "$MMPROJ_16X" 16x
-start_one 8081 "$MMPROJ_4X" 4x
+start_one 8081 "$MMPROJ_4X" detail
 
 echo "Waiting for /health ..."
 FAILED=""
-for port in 8080 8081; do
-    label=$([ "$port" = 8080 ] && echo 16x || echo 4x)
+for port in 8081; do
+    label=detail
     ok=""
     for _ in $(seq 1 60); do
         curl -sf -m 2 "http://127.0.0.1:${port}/health" >/dev/null && { echo ":$port healthy"; ok=1; break; }
@@ -71,7 +69,7 @@ if [ -n "$FAILED" ]; then
     # "nothing happened" instead of the truth (this exact script did tonight).
     echo "ERROR: llama-server never became healthy on:$FAILED" >&2
     for port in $FAILED; do
-        label=$([ "$port" = ":8080" ] && echo 16x || echo 4x)
+        label=detail
         echo "--- tail $LOGDIR/llama-$label.log ---" >&2
         tail -5 "$LOGDIR/llama-$label.log" >&2 2>/dev/null || echo "(no log file)" >&2
     done

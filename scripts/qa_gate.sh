@@ -79,12 +79,11 @@ wait_health() { # port deadline_s label
 }
 
 echo "== boot healthy instance :$HEALTHY_PORT"
-BASELINES_DIR="$STORE_H" LLAMA_SERVER_16X="$LLAMA_16X" LLAMA_SERVER_4X="$LLAMA_4X" \
+BASELINES_DIR="$STORE_H" LLAMA_SERVER_DETAIL="$LLAMA_4X" \
     setsid uv run --extra dev uvicorn app:app --port "$HEALTHY_PORT" \
     > "/tmp/mpw_gate_healthy.log" 2>&1 < /dev/null &
 echo "== boot dead-backend instance :$DEAD_PORT"
-BASELINES_DIR="$STORE_D" LLAMA_SERVER_16X="http://127.0.0.1:1/v1/chat/completions" \
-    LLAMA_SERVER_4X="http://127.0.0.1:1/v1/chat/completions" \
+BASELINES_DIR="$STORE_D" LLAMA_SERVER_DETAIL="http://127.0.0.1:1/v1/chat/completions" \
     setsid uv run --extra dev uvicorn app:app --port "$DEAD_PORT" \
     > "/tmp/mpw_gate_dead.log" 2>&1 < /dev/null &
 

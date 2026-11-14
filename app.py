@@ -7,6 +7,7 @@ import io
 import inspect
 import json
 import os
+import sys
 import re
 from pathlib import Path
 import sqlite3
@@ -104,14 +105,20 @@ BOOT_COMMIT = _boot_commit()
 BOOT_PID = os.getpid()
 BOOTED_AT = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
-# Two vision towers. Orientation is MEASURED, not inferred from filenames —
-# the "-4x" file is the HIGH-detail one (scale_factor=2 => 4x downsample =>
-# 256 tokens/tile); plain f16 is scale_factor=4 (16x downsample => 64
-# tokens/tile). Receipts (same baseline PNG, temperature=0, both hosts):
-#   :8080 loads mmproj-model-f16.gguf   -> 489/612 prompt tokens  (fast/general)
-#   :8081 loads mmproj-model-f16-4x.gguf -> 1851/2304 prompt tokens (detail/OCR)
-# Re-measure: POST the same image to both /v1/chat/completions and compare
-# usage.prompt_tokens; tests/test_tower_orientation.py pins this live.
+# SINGLE TOWER (user decision 2026-11-13): only the capable -4x projector
+# tower ships (:8081; scale_factor=2 => 4x downsample => 256 tokens/tile).
+# RETRACTED as live bindings (2026-11-13), the historical two-tower map:
+# RETRACTED: `fast` side = `mmproj-model-f16.gguf` = 64 tok/tile = `:8080`.
+# Historical receipts kept as history (RETRACTED as live claims), same-image
+# baseline PNG at temperature=0, 2026-10-17: `:8080`=489/612 vs `:8081`=1851/2304.
+# tests/test_tower_orientation.py now pins the single-tower static contract.
+# v1.1 SINGLE-TOWER law (user decision 2026-11-13): only the capable tower
+# ships — `detail` (mmproj-model-f16-4x, scale_factor=2 -> 4x downsample ->
+# 256 tok/tile). The 64-tok/tile `fast` tower is DECOMMISSIONED: every
+# MODE_ALIASES key now resolves to detail; old callers pass but get the
+# capable tower (deprecate-don't-crash: silently 400-ing legacy mode is how
+# fresh-clone 502s are born, D9). Historical receipts above (489 vs 1851
+# prompt tokens on the two projectors) stay honest as history.
 # D9 (fresh-clone rehearsal 2026-10-27, the 502): monitor.toml promises
 # "write http://host:8081 or .../v1 — both accepted everywhere", and
 # everywhere WASN'T true: start_app.sh exports the bare origin, /analyze
@@ -119,6 +126,7 @@ BOOTED_AT = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+0
 # a fifth way (systemd unit hardcodes the full chat URL); the bug lived in
 # the seam between two env producers. ONE canonicalizer at import: bare,
 # /v1, or full — all become the full chat URL before anything reads it.
+# The single seam stays single: ONE env name, one canonicalizer, one tower.
 def _tower_chat_url(u: str) -> str:
     u = (u or "").strip().rstrip("/")
     if not u:
@@ -130,12 +138,17 @@ def _tower_chat_url(u: str) -> str:
     return u + "/v1/chat/completions"
 
 
-LLAMA_SERVER_FAST = _tower_chat_url(os.getenv("LLAMA_SERVER_FAST")
-                                    or os.getenv("LLAMA_SERVER_16X")
-                                    or "http://127.0.0.1:8080/v1/chat/completions")
 LLAMA_SERVER_DETAIL = _tower_chat_url(os.getenv("LLAMA_SERVER_DETAIL")
                                       or os.getenv("LLAMA_SERVER_4X")
                                       or "http://127.0.0.1:8081/v1/chat/completions")
+# Decommissioned env names: loud when set, never consulted. A leftover
+# LLAMA_SERVER_FAST in a unit file must not look like it still routes.
+for _dead_env in ("LLAMA_SERVER_FAST", "LLAMA_SERVER_16X"):
+    if os.getenv(_dead_env):
+        print(f"mpw: {_dead_env} is DECOMMISSIONED (single-tower since "
+              f"2026-11-13) and IGNORED — the only tower is LLAMA_SERVER_DETAIL",
+              file=sys.stderr)
+LLAMA_SERVER = LLAMA_SERVER_DETAIL  # canonical alias; one product, one seam
 # v0.4 deterministic verdict layer (detdiff): page_sim at or above this
 # threshold => "identical", VLM narration skipped entirely. Provisional
 # pending v0.5 control calibration (per-baseline, per-band profiles).
@@ -172,23 +185,16 @@ PROMPT_VERSION = hashlib.sha256(
     (SYSTEM_PROMPT + NARRATION_PROMPT_SINGLE).encode()
 ).hexdigest()[:12]
 
-# Tower semantics (corrected 2026-10-21 doc lint against the 2026-10-17
-# re-measure + GGUF headers): `detail` = high-detail tower
-# (mmproj-model-f16-4x, scale_factor=2 → 4× downsample → 256 tok/tile),
-# `fast` = general tower (mmproj-model-f16, scale_factor=4 → 16× downsample
-# → 64 tok/tile). RETRACTED: this block originally claimed
-# "detail = f16 ~837 visual tokens, fast = -4x ~228" (RETRACTED claim) —
-# the pre-re-measure inversion that
-# survived one README "fix"; those numbers do not survive repro.
-# `16x`/`4x` are DEPRECATED aliases
-# (owner ruling 2026-10-15; naming debate settled by the same token
-# measurements — see start_llama_servers.sh header).
-# Alias truth follows the FILE semantics (user-verified GGUF headers
-# 2026-10-17): "16x" mode = f16 = 64 tok/tile = fast; "4x" = -4x =
-# 256 tok/tile = detail. The old table had these crossed — the same
-# inversion as the original README, surviving one "fix".
-MODE_ALIASES = {"detail": "detail", "fast": "fast", "ocr": "detail",
-                "general": "fast", "16x": "fast", "4x": "detail"}
+# Tower semantics, single-tower era (user decision 2026-11-13): this table
+# exists for DEPRECATE-DON'T-CRASH — every historical mode name is accepted,
+# recorded, and routes to the one capable tower (`detail`, -4x projector,
+# 256 tok/tile). RETRACTED as live bindings (2026-11-13): the measured
+# RETRACTED 2026-10-17 two-tower map: `detail` = `-4x` = `:8081` vs `fast` =
+# `f16` = 64 tok/tile = `:8080`; whose own 2026-10-15 inversion retraction (an
+# 8-3-7/~2-2-8 figure) remains retracted inside that history. The crossed
+# pre-2026-10-17 alias table must stay dead as well.
+MODE_ALIASES = {"detail": "detail", "fast": "detail", "ocr": "detail",
+                "general": "detail", "16x": "detail", "4x": "detail"}
 
 
 class CheckFailed(Exception):
@@ -709,11 +715,9 @@ async def call_llama(messages: list, mode: str = "detail") -> dict:
     error prose as a result string. finish_reason == 'length' is a failure:
     truncated output must never be parsed downstream (Sammy rule (a)).
     """
-    # Resolve semantic mode to a backend by MEASURED orientation:
-    # fast/general -> f16 file (:8080, 64 tok/tile); detail/OCR -> -4x file
-    # (:8081, 256 tok/tile). Unknown modes fall back to fast (cheaper default).
-    server_url = (LLAMA_SERVER_FAST if MODE_ALIASES.get(mode, "fast") == "fast"
-                  else LLAMA_SERVER_DETAIL)
+    # SINGLE-TOWER (2026-11-13): every mode resolves to the capable tower;
+    # `mode` is accepted for legacy callers and recorded, never routed on.
+    server_url = LLAMA_SERVER_DETAIL
     payload = {
         "model": "minicpm-v",
         "messages": messages,
@@ -1288,8 +1292,9 @@ async def analyze(
     Analyze an image and/or verify a URL.
     - capture_baseline=true + url: take live screenshot and store it as the healthy baseline for that URL.
     - Otherwise: compare live page against stored baseline (if any) or against an uploaded reference image.
-    mode: "detail" (full-res tower) or "fast" (token-saving tower);
-          legacy aliases "16x"->fast, "4x"->detail (file truth, 2026-10-17).
+    mode: "detail" — the only tower since 2026-11-13. Legacy names
+          ("fast", "16x", "4x", "ocr", "general") are accepted, recorded,
+          and route to detail (deprecate-don't-crash).
     visual_verify: whether to capture a live screenshot for comparison.
     """
     # S2 entry gate (per-hop guards still carry the rest of the load).
@@ -1786,13 +1791,11 @@ async def health():
         except Exception as e:
             return f"unreachable: {type(e).__name__}: {e}"
 
-    r_fast, r_detail = await asyncio.gather(check(LLAMA_SERVER_FAST), check(LLAMA_SERVER_DETAIL))
+    r_detail = await check(LLAMA_SERVER_DETAIL)
     return {
         "version": VERSION,
         "commit": BOOT_COMMIT, "pid": BOOT_PID, "started_at": BOOTED_AT,
-        "fast": r_fast,        # f16 @ :8080 (legacy key "16x")
-        "detail": r_detail,    # -4x @ :8081 (legacy key "4x")
-        "16x": r_fast, "4x": r_detail,   # deprecated aliases, file-truth
+        "detail": r_detail,    # the ONLY tower since 2026-11-13 (fast/16x/4x keys retired, not aliased: a stale key vouching for a decommissioned tower is D10's pattern)
         "ssrf_allowlist": sorted(_allowed_target_patterns()),
         "admin_auth": "enabled" if os.environ.get("MPW_ADMIN_TOKEN", "").strip() else "disabled",
         "playwright": "available" if _playwright_available() else "not installed (run: playwright install chromium)",

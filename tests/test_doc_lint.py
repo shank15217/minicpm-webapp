@@ -26,7 +26,11 @@ def test_fact_table_is_parsed_from_code_not_memory():
     # If app.py ever re-pins these ports the lint follows the CODE, not us:
     assert f["ports"]["fast"] == ":8080"
     assert f["ports"]["detail"] == ":8081"
-    assert f["aliases"]["16x"] == "fast" and f["aliases"]["4x"] == "detail"
+    # single-tower era: every alias resolves to detail; the DEAD side keeps a
+    # constant port (the decommissioned tower has no code default to parse)
+    assert (f["aliases"]["16x"] == "detail" and f["aliases"]["fast"] == "detail"
+            and f["aliases"]["4x"] == "detail")
+    assert f["ports"]["fast"] == ":8080"  # dead side constant
 
 
 def test_quinn_fixture1_number_free_inversion_fires():
@@ -34,7 +38,9 @@ def test_quinn_fixture1_number_free_inversion_fires():
     only the fact-table parser can catch it. Plants are token-split so THIS
     source line doesn't itself form a complete false binding (a plant that
     isn't split indicts the planter — the tree scan reads this file)."""
-    planted = "the launch table says fast = -4" + "x file = :808" + "1\n"
+    # single-tower world: binding ANY mode to the decommissioned side is the
+    # canonical inversion; fast=-4x=:8081 is now the TRUE statement.
+    planted = "the launch table says fast = f1" + "6 file = :808" + "0\n"
     v = doc_lint.alias_inversions("planted.md", planted, facts())
     assert len(v) == 1 and "planted.md:1" in v[0], f"number-free inversion slipped: {v}"
     # mirror-image plant: detail bound to the fast side
@@ -42,10 +48,13 @@ def test_quinn_fixture1_number_free_inversion_fires():
                                   "mode=detail resolves to f1" + "6 on :808" + "0\n", facts())
     assert len(v) == 1, f"mirror inversion slipped: {v}"
     # TRUE claims must stay silent (same words, right bindings)
-    for ok in ("fast = f16 file = :8080\n",
-               "detail = -4x file = :8081\n",
-               "the fast tower runs on :8080 and detail on :8081\n"):
+    for ok in ("detail = -4x file = :8081\n",):
         assert doc_lint.alias_inversions("ok.md", ok, facts()) == [], f"FP on: {ok}"
+    for planted in ("fast = f16 file = :8080\n",
+                    "the fast tower runs on :8080 and detail on :8081\n"):
+        # resurrecting the decommissioned tower is a live claim of a dead
+        # side — exactly what the 2026-11-13 fact-table inversion detects
+        assert doc_lint.alias_inversions("p.md", planted, facts()), f"missed: {planted}"
 
 
 def test_quinn_fixture2_phantom_clause_fires_on_live_regime_filter_cites():
@@ -106,7 +115,7 @@ def test_gap1_table_row_window_fires_controls_silent():
     """Table rows bind by cell-ADJACENCY: window = whole row. Cell-splitting
     would leave every cell alone and every table inversion would silently
     self-silence — the fake-green trap Sammy named."""
-    planted = "| " + "fast | -4" + "x | :808" + "1 |\n"
+    planted = "| " + "fast | f1" + "6 | :808" + "0 |\n"
     v = doc_lint.alias_inversions("planted.md", planted, facts())
     assert len(v) == 1, f"table inversion walked: {v}"
     for ok in ("| fast | 64 tok/tile |\n",                       # true row
@@ -199,10 +208,10 @@ def test_gap6_padding_cannot_launder_the_window():
     and LINE-LEVEL ACCOUNTING catches the appositive-gap shape: a mode
     claimed with binding context whose own side contributes no claim token
     anywhere on the line is bound to whatever the line does claim."""
-    pad0 = "mode=fast routes OC" + "R to :808" + "1."
+    pad0 = "mode=fast routes OC" + "R to :808" + "0."
     pad1 = ("mode=fast, in production since the v0.4 deterministic verdict "
             "layer shipped and the narration prompt was rewritten, routes "
-            "OCR to :808" + "1.")
+            "OCR to :808" + "0.")
     for name, planted in (("PAD-0", pad0), ("PAD-1", pad1)):
         v = doc_lint.alias_inversions("planted.md", planted, facts())
         assert len(v) == 1, f"{name} laundering-by-padding walked: {v}"
@@ -232,5 +241,5 @@ def test_tbl1_file_marker_in_table_cell_fires():
     planted = "| detail | f1" + "6 |\n"
     v = doc_lint.alias_inversions("planted.md", planted, facts())
     assert len(v) == 1, f"TBL-1 walked: {v}"
-    ok = "| fast | f16 |\n"  # TRUE cell pairing
+    ok = "| fast | -4x | :8081 |\n"  # TRUE cell pairing (single tower)
     assert doc_lint.alias_inversions("ok.md", ok, facts()) == []

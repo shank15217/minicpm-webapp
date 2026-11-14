@@ -10,11 +10,9 @@ through **uv**; never use `python -m pip` (uv venvs contain no pip — verified 
 ## Architecture recap
 
 ```
-client ──▶ FastAPI app (port 8000) ──▶ llama-server :8080 (fast: mmproj-model-f16,
-                 │                            16× downsample, ~64 visual tok/tile —
-                 │                            general serving, cheaper)
-                 │                 └──▶ llama-server :8081 (detail: mmproj-model-f16-4x,
-                 │                            4× downsample, ~256 tok/tile — OCR/grounding)
+client ──▶ FastAPI app (port 8000) ──▶ llama-server :8081 (detail: mmproj-model-f16-4x,
+                 │                            4× downsample, ~256 tok/tile — OCR/grounding;
+                 │                            the only tower since 2026-11-13)
                  └─▶ detdiff (deterministic band diff: owns the verdict, no GPU)
                  └─▶ Playwright Chromium (headless, full-page screenshots)
                  └─▶ baselines/  (PNG + index.json; gitignored runtime data)
@@ -105,23 +103,25 @@ The app is a client of two `llama-server` processes; they are NOT installed by
    > tests/test_tower_orientation.py`. If small text goes undetected, check
    > you are reading the *detail* port (`:8081`).
    >
-   > App-facing names are semantic: `mode=detail` → f16-4x (`:8081`),
-   > `mode=fast` → f16 (`:8080`). `16x`/`4x` are accepted as deprecated
-   > aliases and are mapped in `app.py:MODE_ALIASES` (`16x`→fast,
-   > `4x`→detail).
+   > App-facing names: `mode=detail` is the only tower (`:8081`) since
+   > 2026-11-13; `fast`/`16x`/`4x`/`ocr`/`general` are accepted legacy names
+   > mapped to detail in `app.py:MODE_ALIASES`. RETRACTED as live binding
+   > (2026-11-13) RETRACTED: `mode=fast` routes no more — `f16` and `:8080` are dead side.
 
 ## Step 3 — Start services
 
 Named scripts (each is idempotent; they health-check before starting):
 
 ```bash
-MODEL_DIR=/opt/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh   # :8080 (16x) + :8081 (4x)
+MODEL_DIR=/opt/models/MiniCPM-V-4.7 ./scripts/start_llama_servers.sh   # :8081 detail only (single tower 2026-11-13)
 ./scripts/start_app.sh                                                 # app on :8000
 ```
 
 App env overrides: `PORT`, `HOST`, `BASELINES_DIR`,
-`LLAMA_SERVER_16X` (legacy env: the fast/f16 backend URL, `:8080`),
-`LLAMA_SERVER_4X` (legacy env: the detail backend URL, `:8081`),
+`LLAMA_SERVER_DETAIL` (canonical: the tower URL, `:8081`),
+`LLAMA_SERVER_4X` (legacy shadow of the same),
+`LLAMA_SERVER_16X`/`LLAMA_SERVER_FAST` (decommissioned 2026-11-13 — setting
+one prints a loud stderr warning and is otherwise ignored),
 `DET_PASS_SIM` (deterministic change threshold, default `0.995` —
 provisional until the v0.5 control calibration; see
 `docs/calibration-protocol.md`).

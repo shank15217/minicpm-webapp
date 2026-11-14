@@ -28,12 +28,9 @@ import tomllib
 cfg = tomllib.load(open("monitor.toml", "rb"))
 t = cfg.get("towers", {})
 detail = t.get("detail", "")
-vision = t.get("vision", detail)
 origin = lambda u: (u.rstrip("/")[:-3] if u.rstrip("/").endswith("/v1") else u.rstrip("/"))
 if detail:
     print(f'export LLAMA_SERVER_DETAIL="{origin(detail)}"')
-if vision:
-    print(f'export LLAMA_SERVER_FAST="{origin(vision)}"')
 hosts = ",".join(s["url"].split("//", 1)[-1].split("/", 1)[0]
                  for s in cfg.get("sites", []) if s.get("url"))
 if hosts:

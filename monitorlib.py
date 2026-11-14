@@ -148,7 +148,7 @@ def analyze_one(base_url: str, site_key: str, url: str, timeout: int):
     return "CHECK_FAILED", f"status={st} error={body.get('error_code')}", None
 
 
-TOWERS_PROBES = ("fast", "detail", "16x", "4x")
+TOWERS_PROBES = ("detail",)   # single tower since 2026-11-13; retired keys must not linger and vouch for a decommissioned tower (D10a)
 
 
 def towers_health(base_url: str, timeout: int = 15):

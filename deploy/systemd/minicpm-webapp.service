@@ -27,7 +27,6 @@ Environment=PORT=8000
 # Prod serves the LAN; a localhost bind would hide /health from every
 # remote audit (that blindness is how a 46h outage read as "fine").
 Environment=HOST=0.0.0.0
-Environment=LLAMA_SERVER_FAST=http://pvellm2.nellienet.win:8080/v1/chat/completions
 Environment=LLAMA_SERVER_DETAIL=http://pvellm3.nellienet.win:8081/v1/chat/completions
 ExecStart=/root/minicpm-webapp/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
 # W11 rule: Restart=always (on-failure leaves clean-exit deaths silent).

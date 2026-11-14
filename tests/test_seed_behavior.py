@@ -96,11 +96,14 @@ class TestHealth:
         r = requests.get(f"{BASE}/health", timeout=10)
         assert r.status_code == 200
         j = r.json()
-        assert set(j) >= {"16x", "4x", "playwright", "baselines_count"}
+        # single tower since 2026-11-13: 16x/4x/fast keys are RETIRED, not
+        # aliased — a stale key vouching for a decommissioned tower is D10.
+        assert set(j) >= {"detail", "playwright", "baselines_count"}
+        assert {"16x", "4x", "fast"}.isdisjoint(j), "retired tower keys returned"
 
     def test_health_backends_ok_on_healthy_instance(self):
         j = requests.get(f"{BASE}/health", timeout=10).json()
-        assert j["16x"] == "ok", j["16x"]
+        assert j["detail"] == "ok", j["detail"]
 
 
 class TestS6ErrorAsContent:

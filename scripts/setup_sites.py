@@ -135,7 +135,7 @@ def main() -> int:
         return 2
     print("== collector: tower provenance ==")
     tower_info = {}
-    for name in ("detail", "vision"):
+    for name in ("detail",):  # single tower 2026-11-13
         u = towers.get(name)
         if not u:
             continue

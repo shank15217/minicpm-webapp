@@ -29,10 +29,10 @@
     <form id="analyzeForm">
       <label>Vision mode</label>
       <select id="mode">
-        <option value="fast" selected>fast — general serving tower, f16 (:8080; ~64 visual tokens/tile; cheap default)</option>
-        <option value="detail">detail — OCR/grounding tower, -4x (:8081; ~256 visual tokens/tile; ~4x prefill cost)</option>
+        <option value="detail" selected>detail — the only tower since 2026-11-13, -4x (:8081; ~256 visual tokens/tile)</option>
+        <option value="fast">fast — accepted for legacy callers; routes to detail</option>
       </select>
-      <div class="mode-note">Token counts measured 2026-10-17 on prod towers, same image: f16(:8080)=489 vs -4x(:8081)=1851 prompt tokens. The "-4x" file is the HIGH-detail one (4x downsample = 256 tok/tile); plain f16 is 16x downsample = 64 tok/tile. More detail always costs tokens — physics, not config. Re-measure: tests/test_tower_orientation.py.</div>
+      <div class="mode-note">Single tower since 2026-11-13: the -4x projector at :8081, 256 tok/tile. RETRACTED historical receipts (kept as history): `f16(:8080)=489` vs `-4x(:8081)=1851` prompt tokens, same image, 2026-10-17. Detail costs tokens — physics, not config. Pin: tests/test_tower_orientation.py.</div>
 
       <label>Reference image (optional if using stored baseline)</label>
       <input type="file" id="file" accept="image/*">
@@ -64,8 +64,7 @@
     <div id="result"></div>
     <p class="note">
       Backend expects llama-server instances:<br>
-      • fast/general tower on port 8080 (mmproj-model-f16.gguf, 64 tok/tile) — default<br>
-      • detail/OCR tower on port 8081 (mmproj-model-f16-4x.gguf, 256 tok/tile)<br>
+      • detail tower on port 8081 (mmproj-model-f16-4x.gguf, 256 tok/tile) — the only tower since 2026-11-13<br>
       Accessible over the network on port 8000.<br>
       Visual verification and baselines require Playwright + Chromium (see README).<br>
       Baselines are stored locally in the <code>baselines/</code> folder.

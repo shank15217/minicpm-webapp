@@ -86,17 +86,24 @@ def fact_table():
         raise SystemExit("doc_lint: cannot parse MODE_ALIASES from app.py — "
                          "if the table moved, fix THIS file in the same commit")
     aliases = dict(re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', m.group(1)))
-    ports = {}
-    for mode, var in (("fast", "LLAMA_SERVER_FAST"), ("detail", "LLAMA_SERVER_DETAIL")):
-        pm = re.search(var + r'.*?:(\d{4})', app, re.S)
-        ports[mode] = f":{pm.group(1)}"
+    # SINGLE-TOWER era (2026-11-13): every alias resolves to detail; the
+    # DEAD side is the decommissioned fast/f16 tower. A live doc binding ANY
+    # tower subject to the dead side (:8080, plain f16, "fast tower") now
+    # FIRES — the old semantics ("fast->:8080 is TRUE") inverted with the
+    # user's single-tower decision. ports.fast is intentionally a constant:
+    # the dead tower has no code default to parse.
+    pm = re.search(r"LLAMA_SERVER_DETAIL.*?:(\d{4})", app, re.S)
+    if not pm:
+        raise SystemExit("doc_lint: cannot parse LLAMA_SERVER_DETAIL default "
+                         "from app.py — if it moved, fix THIS file in the same commit")
+    if '"LLAMA_SERVER_FAST = _tower_chat_url' in app:
+        raise SystemExit("doc_lint: LLAMA_SERVER_FAST routes are BACK in app.py — "
+                         "the fast tower was decommissioned 2026-11-13")
+    detail_port = f":{pm.group(1)}"
+    ports = {"detail": detail_port, "fast": ":8080"}
     other = {"fast": "detail", "detail": "fast"}
-    # OWN-side claim tokens: a token occurrence claims its side; it FIRES
-    # only when the nearest SUBJECT (mode name/alias) is the other side.
-    # (Set-based "both sides appear" was wrong: 'fast = f16 = :8080 ·
-    # detail = -4x = :8081' is two TRUE bindings sharing one window.)
-    own = {"fast": [ports["fast"], r"f16(?!-4x)"],
-           "detail": [ports["detail"], r"-4x"]}
+    own = {"fast": [":8080", r"f16(?!-4x)", r"fast tower"],
+           "detail": [detail_port, r"-4x"]}
     return {"ports": ports, "aliases": aliases, "other": other, "own": own}
 
 
@@ -244,8 +251,12 @@ def _window_hit(window, facts, row_window=False):
 
 def alias_inversions(fname, text, facts):
     out = []
-    if os.path.basename(fname) in LINT_LEDGER_FILES or fname == "scripts/doc_lint.py":
-        # ledgers quote the traps; the detector's own source IS the vocabulary
+    if (os.path.basename(fname) in LINT_LEDGER_FILES
+            or os.path.basename(fname) == "test_doc_lint.py"
+            or fname == "scripts/doc_lint.py"):
+        # ledgers quote the traps; the detector's own source AND its test
+        # file ARE the vocabulary (planted strings live there in split form,
+        # and split does not survive every refactor)
         return out
     stripped = strip_quoted(text)
     for ln, line in enumerate(text.splitlines(), 1):

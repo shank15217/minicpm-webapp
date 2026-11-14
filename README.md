@@ -7,29 +7,23 @@ the MiniCPM-V-4.7-1B multimodal model to:
 - Perform website health / defacement checks by comparing a live page against a
   known-good baseline — the verdict is owned by a **deterministic pixel diff**
   (dHash64 + MAE per band); the VLM is a *narrator* only
-- Support both vision towers simultaneously: **`detail`** (OCR/grounding
-  `mmproj-model-f16-4x.gguf`, 4× downsample = 256 tok/tile, ~4× prefill cost)
-  and **`fast`** (general serving `mmproj-model-f16.gguf`, 16× downsample =
-  64 tok/tile) — orientation re-measured 2026-10-17, see the box below
+- Run on the capable vision tower: **`detail`** (`mmproj-model-f16-4x.gguf`,
+  4× downsample = 256 tok/tile). Single tower since the user's decision of
+  2026-11-13; legacy mode names are accepted and route to `detail`
 
 The web UI is optional; the entire workflow is available via a REST API.
 
 > **Tower naming, settled by GGUF headers + fresh measurement (2026-10-17):**
 > the file suffix names the **downsample factor**, not the token count.
-> `mmproj-model-f16.gguf` carries `projector.scale_factor=4` (16× downsample)
-> → **64 tok/tile → the FAST/general tower on :8080**; `mmproj-model-f16-4x.gguf`
-> carries `scale_factor=2` (4× downsample, 209 MB extra early-compression
-> merger *deleted*) → **256 tok/tile → the DETAIL/OCR tower on :8081**.
-> Measured same-image on prod: `:8080`=489 prompt tokens vs `:8081`=1851
-> (Paul) and 612 vs 2304 (Quinn) — the user's header diff predicts 640 vs
-> 2560 for a 9-slice image; ratios match. RETRACTED: the 2026-10-15
-> receipt "f16 = 832 vs -4x = 223, f16 is high-detail" (RETRACTED) —
-> falsified by
-> today's re-measure; whatever produced it does not survive repro, and
-> `tests/test_tower_orientation.py` (live mode: `MPW_TOWER_PROBE=1`) now
-> pins the orientation so it can never ship inverted a third time.
-> Aliases follow file truth: `16x`→`fast`, `4x`→`detail`, plus
-> `general`→`fast`, `ocr`→`detail`.
+> `mmproj-model-f16-4x.gguf` carries `scale_factor=2` (4× downsample) →
+> **256 tok/tile — the detail tower**, the ONLY tower since 2026-11-13.
+> RETRACTED as live bindings (2026-11-13, single-tower decision), the
+> RETRACTED two-tower pairing: `fast` = `mmproj-model-f16.gguf` = 64 tok/tile = `:8080`.
+> RETRACTED historical receipts (kept as history): same-image `:8080`=489
+> vs `:8081`=1851 (Paul) and 612 vs 2304 (Quinn), 2026-10-17, plus the
+> 2026-10-15 inversion falsified the same day.
+> `tests/test_tower_orientation.py` pins the single-tower static contract.
+> Aliases all route to `detail`: `16x`, `4x`, `fast`, `general`, `ocr`.
 
 **Start here for testing and shipping:** [docs/RUNBOOK.md](docs/RUNBOOK.md)
 (user test plan U1–U6 + published weaknesses ledger W1–W11). Deploy order and
@@ -54,8 +48,8 @@ affecting the monitor.
   The model cannot flip a verdict in either direction.
 - **Narrator-only VLM**: only flagged band crops are described, single-image,
   describe-only prompts (no pairwise judgment, no scores — see RUNBOOK W6).
-- **Dual vision modes**: `mode=detail|fast` routes to separate llama-server
-  instances (f16 tower on `:8080`, 4x tower on `:8081` — the app defaults).
+- **Vision mode parameter**: `mode` is accepted for legacy callers and
+  always routes to the single `detail` tower (single-tower since 2026-11-13).
 - **Baseline capture**: snapshot a healthy site once; PNGs + `index.json`
   under `baselines/` (single copy — see RUNBOOK W10).
 - **Site-updated flow**: all bands differing plus a large height delta routes
@@ -69,8 +63,8 @@ affecting the monitor.
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐
-│  Client /   │────▶│  FastAPI (app.py)│────▶│ llama-server :8080  │
-│  UI / curl  │     │  port 8000       │     │  fast (f16 tower)   │
+│  Client /   │────▶│  FastAPI (app.py)│────▶│ llama-server :8081  │
+│  UI / curl  │     │  port 8000       │     │  the detail tower   │
 └─────────────┘     │                  │     └─────────────────────┘
                     │  detdiff (owns   │     ┌─────────────────────┐
                     │  the verdict) +  │────▶│ llama-server :8081  │
@@ -91,8 +85,8 @@ affecting the monitor.
 1. **llama.cpp** built from a checkout that includes MiniCPM-V 4.7 support (PR #29416 or later).
 2. Model files from Hugging Face (`openbmb/MiniCPM-V-4.7-1B-gguf`):
    - `MiniCPM-V-4_7-1B-Q8_0.gguf` (**default since v0.4**; `Q4_K_M` documented as rollback)
-   - `mmproj-model-f16.gguf` (the FAST/general tower, 64 tok/tile, port 8080)
-   - `mmproj-model-f16-4x.gguf` (the DETAIL/OCR tower, 256 tok/tile, port 8081)
+   - `mmproj-model-f16-4x.gguf` (the detail tower, 256 tok/tile — the only
+     tower since 2026-11-13; `mmproj-model-f16.gguf` is no longer downloaded)
 
    ```bash
    huggingface-cli download openbmb/MiniCPM-V-4.7-1B-gguf MiniCPM-V-4_7-1B-Q8_0.gguf --local-dir models
@@ -111,29 +105,14 @@ affecting the monitor.
 > Easiest path: `scripts/start_llama_servers.sh` starts both towers with the
 > correct mmproj↔port pairing and preserves anything already running.
 
-### 1. Start the two llama-server instances
+### 1. Start the llama-server instance (one, since 2026-11-13)
 
-Port/mode pairing **matches the app defaults** — do not cross them
-(`mode=fast` requests go to `:8080`, `mode=detail` to `:8081`; launching the `-4x` tower there
-silently degrades detail-mode checks — an earlier revision of this README
-suggested exactly that, which is how the labels got trusted over the
-physics):
+The app ships a single tower; start the detail instance below.
+RETRACTED as live pairing (2026-11-13): `mode=fast` requests going to
+`:8080` and the second launch block that used to sit here.
 
 ```bash
-# FAST/general — f16 tower (64 tok/tile) — port 8080  [mode=fast]
-/AITOOLCHAIN/llama.cpp/build/bin/llama-server \
-  -m /AITOOLCHAIN/models/MiniCPM-V-4.7/MiniCPM-V-4_7-1B-Q8_0.gguf \
-  --mmproj /AITOOLCHAIN/models/MiniCPM-V-4.7/mmproj-model-f16.gguf \
-  -c 16384 \
-  -fa on \
-  --reasoning on \
-  --jinja \
-  --chat-template-kwargs '{"preserve_thinking":true}' \
-  --port 8080 \
-  --host 0.0.0.0 \
-  -lv 4
-
-# DETAIL/OCR — -4x tower (256 tok/tile) — port 8081  [mode=detail]
+# DETAIL — -4x tower (256 tok/tile) — port 8081 (the only tower)
 /AITOOLCHAIN/llama.cpp/build/bin/llama-server \
   -m /AITOOLCHAIN/models/MiniCPM-V-4.7/MiniCPM-V-4_7-1B-Q8_0.gguf \
   --mmproj /AITOOLCHAIN/models/MiniCPM-V-4.7/mmproj-model-f16-4x.gguf \

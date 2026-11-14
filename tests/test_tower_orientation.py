@@ -3,8 +3,9 @@
 The Oct-15 receipt (":8080 = 837 tokens = detail") (RETRACTED) was falsified on
 2026-10-17 by two independent same-image probes (489 vs 1851 here; 612 vs
 2304 on Quinn's) and by the GGUF headers the user diffed: the "-4x" file
-(scale_factor=2 => 4x downsample) is the HIGH-detail 256-tok/tile tower;
-plain f16 (scale_factor=4, 16x downsample) is the 64-tok/tile general one.
+(scale_factor=2 => 4x downsample) is the HIGH-detail 256-tok/tile tower.
+RETRACTED as a live binding (2026-11-13): `plain f16` = `16x` downsample =
+the 64-tok/tile general side — the second tower is decommissioned.
 
 This pin exists so that inversion can never ship again on prose alone: it
 MEASURES both towers with one deterministic image and asserts the routing
@@ -60,13 +61,15 @@ def prompt_tokens(url: str, png: bytes) -> int:
 def test_static_orientation_labels():
     """Offline pins: routing + UI labels must carry the MEASURED orientation."""
     app = (ROOT / "app.py").read_text()
-    # detail must default to :8081, fast to :8080 (env-overridable, default matters)
-    assert re.search(r'LLAMA_SERVER_DETAIL.*?8081', app, re.S), "detail must default to :8081"
-    assert re.search(r'LLAMA_SERVER_FAST.*?8080', app, re.S), "fast must default to :8080"
-    # alias truth: 16x-mode=f16=fast, 4x=-4x=detail (the OLD crossed table must stay dead)
-    assert '"16x": "fast"' in app and '"4x": "detail"' in app, "aliases must follow file truth"
+    # Single tower (2026-11-13): the detail constant must default to the
+    # detail port, and the decommissioned side must have NO routing default
+    # that a stale import could resurrect.
+    assert re.search(r'LLAMA_SERVER_DETAIL.*?8081', app, re.S), "detail must default to the detail port"
+    assert 'LLAMA_SERVER_FAST = _tower_chat_url' not in app, "fast routing default is decommissioned"
+    # single-tower alias truth: every legacy name resolves to detail
+    assert '"16x": "detail"' in app and '"fast": "detail"' in app, "aliases must all resolve to detail"
     html = (ROOT / "static/index.html").read_text()
-    assert "f16 (:8080" in html and "-4x (:8081" in html, "UI labels must name file+port truth"
+    assert "the only tower since 2026-11-13" in html, "UI must not advertise a second tower"
     # Falsified receipt strings must not return as LIVE claims ANYWHERE —
     # scope widened at the 2026-10-21 doc lint: the original loop covered
     # static/index.html only, which is exactly how the inverted comment in
@@ -133,16 +136,18 @@ def test_retraction_exemption_semantics():
 
 
 def test_live_tower_orientation():
-    """Live pin (pvellm only): same image => detail tower spends MORE tokens."""
+    """Live pin (pvellm only): the detail tower spends file-truth tokens.
+
+    A ~489-token reading means the WRONG projector is loaded — the exact
+    orientation-defect class of 2026-10-17, now caught without a second tower."""
     if os.getenv("MPW_TOWER_PROBE") != "1":
         return  # offline CI: static pins above are the gate
     png = make_png()
-    fast_t, detail_t = prompt_tokens(FAST_URL, png), prompt_tokens(DETAIL_URL, png)
-    print(f"MEASURED: fast(:8080)={fast_t} detail(:8081)={detail_t} "
-          f"ratio={detail_t / max(fast_t, 1):.2f}")
-    assert detail_t > fast_t * 2, (
-        f"TOWER ORIENTATION BROKEN: detail({detail_t}) should spend >=2x "
-        f"fast({fast_t}) — towers swapped or files changed under us")
+    detail_t = prompt_tokens(DETAIL_URL, png)
+    print(f"MEASURED: detail={detail_t} prompt tokens")
+    assert detail_t > 1000, (
+        f"DETAIL PROJECTOR SWAP: detail measured {detail_t} prompt tokens; "
+        "file-truth -4x projector spends ~1851 on this image")
 
 
 if __name__ == "__main__":

@@ -12,14 +12,13 @@ this file = the operating loop). Paths assume `pvellm:/root/minicpm-webapp`.
 
 **Topology (all measured, this file states cadences from `crontab -l`, never
 memory):** app `minicpm-webapp.service` on pvellm (`:8000`, unit-owned env);
-towers SPLIT across hosts — `minicpm-llama@8080` (f16/fast) on **pvellm2**,
-`minicpm-llama@8081` (-4x/detail) on **pvellm3**; `minicpm-monitor.timer` +
+ONE tower — `minicpm-llama@8081` (-4x/detail) on **pvellm3** (single-tower
+2026-11-13; the pvellm2 `@8080` instance is retired), and `minicpm-monitor.timer` +
 `minicpm-monitor-stale.timer` hourly, `Persistent=true`; control rig
 `0 * * * *` and viability `5 * * * *` (both hourly, cron on pvellm, durable
-paths). Port→mmproj pairing is PINNED in the tower unit's case-map, and the
-crossed-pair check is a committed probe:
-`env -u PYTHONPATH .venv/bin/python scripts/tower_orientation_probe.py`
-(fast must pay FEWER prompt tokens than detail; crossed = exit 1).
+paths). The crossed-pair probe (`scripts/tower_orientation_probe.py`) was
+retired with the second tower; the single-tower pin lives in
+`tests/test_tower_orientation.py`.
 
 **Ten-second health check (all four layers):**
 ```bash
