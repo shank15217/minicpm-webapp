@@ -63,7 +63,8 @@ INDEX_PATH = BASELINES_DIR / "index.json"
 
 # Release version — bump at tag-at-ship (v0.5.0: SSRF+S1 gates, W10+D,
 # named-refusal contract). Disclosed in /health so socket answers version.
-VERSION = "1.0.1"  # v1.0.1: D9-D12 patch line (tower-URL canonicalizer seam,
+VERSION = "1.1.0"  # v1.1.0: single-tower (user decision 2026-11-13);
+# v1.0.1: D9-D12 patch line (tower-URL canonicalizer seam,
 # D10 shipped-invocation exporter chain + unit-invocation gate test, D11
 # live-pin skip-with-receipt, D12 whole-dir baselines ignore). Tagged on
 # Quinn's all-green rehearsal at c079682 (MINICPM-QA-REPORT-12). Bump-at-tag
