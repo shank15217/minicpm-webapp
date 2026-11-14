@@ -1,0 +1,19 @@
+{
+ "model": "/AITOOLCHAIN/models/d1-2B/d1-2B-Q8_0.gguf",
+ "answers": {
+  "color": {
+   "type": "choice",
+   "choice": "red",
+   "probabilities": {
+    "red": 0.9990841696760357,
+    "blue": 0.0005622359844218295,
+    "green": 0.0003535943395424619
+   },
+   "confidence": 0.9990841696760357
+  }
+ },
+ "usage": {
+  "input_tokens": 107,
+  "output_tokens": 0
+ }
+}

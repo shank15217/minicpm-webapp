@@ -1,0 +1,13 @@
+{
+ "model": "/AITOOLCHAIN/models/d1-2B/d1-2B-Q8_0.gguf",
+ "answers": {
+  "match": {
+   "type": "noul",
+   "noul": 0.277199824338505
+  }
+ },
+ "usage": {
+  "input_tokens": 108,
+  "output_tokens": 0
+ }
+}
